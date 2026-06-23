@@ -72,3 +72,47 @@ class Span:
     def __post_init__(self) -> None:
         if self.start > self.end:
             raise ValueError(f"span start ({self.start}) must be <= end ({self.end})")
+
+
+@dataclass(frozen=True, slots=True)
+class Unit:
+    """The retrievable, packable atom; never split during retrieval.
+
+    ``protect=True`` marks units the packer must never compress or elide (code
+    blocks, tables, formal definitions, payload fragments). ``breadcrumb`` is
+    the ordered ancestry of section/container titles above this unit.
+    """
+
+    id: str
+    document_id: str
+    span: Span
+    text: str
+    token_count: int
+    title: str | None
+    breadcrumb: tuple[str, ...]
+    kind: UnitKind
+    summary: str | None
+    protect: bool
+
+    def __post_init__(self) -> None:
+        if self.token_count < 0:
+            raise ValueError(f"token_count must be >= 0, got {self.token_count}")
+
+
+@dataclass(frozen=True, slots=True)
+class Reference:
+    """A typed, directed edge from one unit to another, with recovery evidence.
+
+    ``confidence`` is the adapter's belief that the edge is real, in [0.0, 1.0];
+    low confidence is surfaced as evidence, never hidden behind guessed structure.
+    """
+
+    source_id: str
+    target_id: str
+    kind: ReferenceKind
+    confidence: float
+    evidence: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.confidence <= 1.0:
+            raise ValueError(f"confidence must be in [0.0, 1.0], got {self.confidence}")
