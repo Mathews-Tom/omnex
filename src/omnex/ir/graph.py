@@ -89,6 +89,19 @@ class StructureGraph:
         """All unit ids in canonical (sorted) order."""
         return sorted(self._g.nodes)
 
+    def edges(self) -> list[tuple[str, str, str]]:
+        """All ``(source, target, kind)`` edges in canonical (sorted) order.
+
+        One row per (source, target, kind), so a multi-kind edge expands into one
+        row per kind. The order is fully determined by the IR, independent of the
+        order in which units and references were supplied to ``build_graph``.
+        """
+        rows: list[tuple[str, str, str]] = []
+        for source, target in self._g.edges:
+            for kind in self.edge_kinds(source, target):
+                rows.append((source, target, kind))
+        return sorted(rows)
+
     def unit(self, unit_id: str) -> Unit:
         """Return the ``Unit`` stored at ``unit_id``."""
         if unit_id not in self._g:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import itertools
+
 import pytest
 
 from omnex.ir.graph import Hop, build_graph
@@ -197,3 +199,44 @@ def test_traverse_terminates_on_cycles_and_self_loops() -> None:
     graph = build_graph(units, refs)
     reached = [h.unit_id for h in graph.traverse(["a"], None, {"CONTAINS": 5})]
     assert sorted(reached) == ["a", "b"]
+
+
+# --- determinism ---
+
+
+def test_edges_are_canonically_ordered() -> None:
+    units = [_unit(x) for x in ("c", "a", "b")]
+    refs = [_ref("b", "c"), _ref("a", "b", kind="REFERENCES"), _ref("a", "b")]
+    graph = build_graph(units, refs)
+    assert graph.edges() == [
+        ("a", "b", "CONTAINS"),
+        ("a", "b", "REFERENCES"),
+        ("b", "c", "CONTAINS"),
+    ]
+
+
+def test_build_is_order_invariant() -> None:
+    units = [_unit(x) for x in ("a", "b", "c", "d")]
+    refs = [_ref("a", "b"), _ref("a", "c"), _ref("b", "d"), _ref("c", "d")]
+    canonical = build_graph(units, refs)
+    for unit_perm in itertools.permutations(units):
+        for ref_perm in (refs, list(reversed(refs))):
+            graph = build_graph(list(unit_perm), ref_perm)
+            assert graph.nodes() == canonical.nodes()
+            assert graph.edges() == canonical.edges()
+
+
+def test_traverse_output_is_byte_identical_across_input_order() -> None:
+    units = [_unit(x) for x in ("a", "b", "c", "d", "e")]
+    refs = [
+        _ref("a", "b"),
+        _ref("a", "c"),
+        _ref("b", "d"),
+        _ref("c", "d"),
+        _ref("d", "e"),
+    ]
+    budget = {"CONTAINS": 5}
+    canonical = repr(build_graph(units, refs).traverse(["a"], None, budget))
+    for ref_perm in itertools.permutations(refs):
+        graph = build_graph(list(reversed(units)), list(ref_perm))
+        assert repr(graph.traverse(["a"], None, budget)) == canonical
