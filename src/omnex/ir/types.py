@@ -13,6 +13,8 @@ This module is import-safe: no model load, no network, no file-system read.
 
 from __future__ import annotations
 
+import hashlib
+import unicodedata
 from dataclasses import dataclass
 from typing import Literal
 
@@ -116,3 +118,35 @@ class Reference:
     def __post_init__(self) -> None:
         if not 0.0 <= self.confidence <= 1.0:
             raise ValueError(f"confidence must be in [0.0, 1.0], got {self.confidence}")
+
+
+def normalize_content(text: str) -> str:
+    """Normalize text for content addressing.
+
+    Unifies line endings (CRLF/CR to LF) and applies Unicode NFC so cosmetic
+    differences hash identically. Pure and deterministic.
+    """
+    unified = text.replace("\r\n", "\n").replace("\r", "\n")
+    return unicodedata.normalize("NFC", unified)
+
+
+def compute_content_hash(text: str) -> str:
+    """Return the SHA-256 content address of ``text`` after normalization."""
+    digest = hashlib.sha256(normalize_content(text).encode()).hexdigest()
+    return f"sha256:{digest}"
+
+
+def make_document_id(*, uri: str, content_hash: str) -> str:
+    """Derive a stable document id from its uri and content hash.
+
+    Distinct documents at the same uri but with different content (or the same
+    content at different uris) receive distinct ids.
+    """
+    payload = f"{uri}\x00{content_hash}".encode()
+    return f"doc:{hashlib.sha256(payload).hexdigest()[:16]}"
+
+
+def make_unit_id(*, document_id: str, span: Span, text: str) -> str:
+    """Derive a stable unit id from its document, span, and normalized text."""
+    body = f"{document_id}\x00{span.start}\x00{span.end}\x00{normalize_content(text)}"
+    return f"unit:{hashlib.sha256(body.encode()).hexdigest()[:16]}"

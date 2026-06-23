@@ -6,7 +6,16 @@ import dataclasses
 
 import pytest
 
-from omnex.ir.types import Document, Reference, Span, Unit
+from omnex.ir.types import (
+    Document,
+    Reference,
+    Span,
+    Unit,
+    compute_content_hash,
+    make_document_id,
+    make_unit_id,
+    normalize_content,
+)
 
 
 def test_document_construction() -> None:
@@ -122,3 +131,65 @@ def test_reference_rejects_out_of_range_confidence(bad: float) -> None:
 @pytest.mark.parametrize("ok", [0.0, 0.5, 1.0])
 def test_reference_accepts_boundary_confidence(ok: float) -> None:
     assert Reference("a", "b", "CONTAINS", ok, ()).confidence == ok
+
+
+def test_content_hash_is_deterministic() -> None:
+    text = "The quick brown fox.\nSecond line."
+    assert compute_content_hash(text) == compute_content_hash(text)
+    assert compute_content_hash(text).startswith("sha256:")
+
+
+def test_content_hash_normalizes_line_endings() -> None:
+    assert compute_content_hash("a\r\nb\rc") == compute_content_hash("a\nb\nc")
+
+
+def test_content_hash_differs_for_different_content() -> None:
+    assert compute_content_hash("alpha") != compute_content_hash("beta")
+
+
+def test_normalize_content_is_idempotent() -> None:
+    once = normalize_content("x\r\ny")
+    assert normalize_content(once) == once
+
+
+def test_normalize_content_applies_nfc() -> None:
+    # Combining acute accent (NFD) normalizes to the precomposed form (NFC).
+    assert normalize_content("e\u0301") == "\u00e9"
+
+
+def test_content_hash_is_unicode_normalized() -> None:
+    # Precomposed and decomposed "é" must hash identically.
+    assert compute_content_hash("\u00e9") == compute_content_hash("e\u0301")
+
+
+def test_identical_content_yields_identical_document_id() -> None:
+    raw = "# Title\r\n\r\nBody paragraph."
+    uri = "file:///docs/a.md"
+    hash_a = compute_content_hash(raw)
+    hash_b = compute_content_hash(raw.replace("\r\n", "\n"))
+    assert hash_a == hash_b
+    assert make_document_id(uri=uri, content_hash=hash_a) == make_document_id(
+        uri=uri, content_hash=hash_b
+    )
+
+
+def test_document_id_differs_by_uri_and_content() -> None:
+    h1 = compute_content_hash("one")
+    h2 = compute_content_hash("two")
+    assert make_document_id(uri="a", content_hash=h1) != make_document_id(uri="b", content_hash=h1)
+    assert make_document_id(uri="a", content_hash=h1) != make_document_id(uri="a", content_hash=h2)
+
+
+def test_identical_content_yields_identical_unit_id() -> None:
+    span = Span(0, 11)
+    id_a = make_unit_id(document_id="doc:1", span=span, text="hello world")
+    id_b = make_unit_id(document_id="doc:1", span=span, text="hello world")
+    assert id_a == id_b
+    assert id_a.startswith("unit:")
+
+
+def test_unit_id_differs_by_span_text_and_document() -> None:
+    base = make_unit_id(document_id="doc:1", span=Span(0, 5), text="hello")
+    assert base != make_unit_id(document_id="doc:1", span=Span(0, 6), text="hello")
+    assert base != make_unit_id(document_id="doc:1", span=Span(0, 5), text="world")
+    assert base != make_unit_id(document_id="doc:2", span=Span(0, 5), text="hello")
