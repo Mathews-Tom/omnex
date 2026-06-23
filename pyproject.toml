@@ -1,0 +1,47 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "omnex"
+description = "Universal, structure-aware retrieval at a fraction of the tokens."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Mathews-Tom" }]
+keywords = ["retrieval", "rag", "structure-aware", "deterministic", "local-first"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Typing :: Typed",
+]
+dynamic = ["version"]
+dependencies = [
+    "networkx>=3.0",
+    "tiktoken>=0.7",
+    "click>=8.1",
+]
+
+[project.optional-dependencies]
+embed = ["fastembed>=0.3"]
+mcp = ["mcp>=1.0"]
+
+[project.urls]
+Homepage = "https://github.com/Mathews-Tom/omnex"
+Repository = "https://github.com/Mathews-Tom/omnex"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "mypy>=1.10",
+    "ruff>=0.6",
+]
+
+[tool.hatch.version]
+path = "src/omnex/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/omnex"]
