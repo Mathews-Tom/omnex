@@ -64,6 +64,10 @@ strict = true
 warn_unused_configs = true
 files = ["src/omnex", "tests"]
 
+[[tool.mypy.overrides]]
+module = ["networkx.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
