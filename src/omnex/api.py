@@ -45,12 +45,26 @@ def _route_sources(
     references: list[Reference] = []
     documents: list[Document] = []
     for source in sources:
-        adapter = select_adapter(source)
-        document = adapter.ingest(source)
+        # Resolve to a canonical absolute path so a document's identity is stable
+        # and an inter-document link (which resolves its target the same way) lands
+        # on the neighbor's own parsed units when both are indexed.
+        resolved = source.resolve()
+        adapter = select_adapter(resolved)
+        document = adapter.ingest(resolved)
         documents.append(document)
         document_units = adapter.parse(document)
         units.extend(document_units)
         references.extend(adapter.link(document, document_units))
+    # Scope edges to the indexed corpus: a cross-document link to a document the
+    # caller did not index is not traversable here, so drop it rather than letting
+    # it dangle into the (fail-loud) graph. Intra-document edges always resolve, so
+    # this only ever removes links that point outside the given sources.
+    indexed = {unit.id for unit in units}
+    references = [
+        reference
+        for reference in references
+        if reference.source_id in indexed and reference.target_id in indexed
+    ]
     return units, references, documents
 
 

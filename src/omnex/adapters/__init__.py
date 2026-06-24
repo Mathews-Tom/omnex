@@ -10,13 +10,22 @@ from __future__ import annotations
 from pathlib import Path
 
 from omnex.adapters.base import AdapterCapabilities, ModalityAdapter
+from omnex.adapters.prose import ProseAdapter
 from omnex.adapters.spec import SpecAdapter
 
 # Adapters are tried in order; the first whose ``claims`` returns True handles the
-# source. This is the single routing registry the public API dispatches through.
-_ADAPTERS: tuple[ModalityAdapter, ...] = (SpecAdapter(),)
+# source. SpecAdapter precedes ProseAdapter so a JSON-encoded spec is never
+# claimed as prose. This is the single routing registry the public API dispatches
+# through.
+_ADAPTERS: tuple[ModalityAdapter, ...] = (SpecAdapter(), ProseAdapter())
 
-__all__ = ["AdapterCapabilities", "ModalityAdapter", "SpecAdapter", "select_adapter"]
+__all__ = [
+    "AdapterCapabilities",
+    "ModalityAdapter",
+    "ProseAdapter",
+    "SpecAdapter",
+    "select_adapter",
+]
 
 
 def select_adapter(source: Path) -> ModalityAdapter:
