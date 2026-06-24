@@ -166,6 +166,14 @@ def test_t3_extraction_request_raises() -> None:
         kernel.retrieve("payment", 100, _config(tier="T3"))
 
 
+def test_t1_closure_request_raises() -> None:
+    # T1 reference closure is not wired in this stack; requesting it must fail
+    # loud rather than silently running the bounded T0 path under a T1 label.
+    kernel = _indexed()
+    with pytest.raises(NotImplementedError, match="T1 reference closure"):
+        kernel.retrieve("payment", 100, _config(tier="T1"))
+
+
 def test_enable_rerank_request_raises() -> None:
     kernel = _indexed()
     with pytest.raises(NotImplementedError, match="rerank lane"):

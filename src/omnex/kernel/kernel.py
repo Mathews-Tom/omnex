@@ -6,10 +6,10 @@ running the same pipeline regardless of modality: FTS retrieval, rank fusion,
 bounded graph expansion, and budget-aware packing, emitting a ``ContextBundle``
 and an auditable ``Receipt``.
 
-Only the T0 floor is wired here. The T2 vector lane, T3 model extraction, and the
-rerank lane are gated off and fail loud, so a run never silently claims a
-guarantee it cannot keep. The T0 path is byte-exact: the same corpus, config, and
-query produce a byte-identical bundle and receipt.
+Only the T0 floor is wired here. T1 reference closure, the T2 vector lane, T3
+model extraction, and the rerank lane are gated off and fail loud, so a run never
+silently claims a guarantee it cannot keep. The T0 path is byte-exact: the same
+corpus, config, and query produce a byte-identical bundle and receipt.
 
 No model load, network, or file-system access.
 """
@@ -35,8 +35,9 @@ __all__ = [
     "Tier",
 ]
 
-# Tiers this stack fully wires, and the determinism class each may claim.
-_DETERMINISM_BY_TIER: dict[str, DeterminismClass] = {"T0": "byte_exact", "T1": "byte_exact"}
+# The only tier this stack wires, and the determinism class it may claim. T1
+# (reference closure) lands in a later stack and is gated off until then.
+_DETERMINISM_BY_TIER: dict[str, DeterminismClass] = {"T0": "byte_exact"}
 
 # Upper bound on lexical candidates pulled before fusion and expansion.
 _FTS_CANDIDATE_LIMIT = 200
@@ -64,9 +65,9 @@ class RetrievalKernel:
         """Retrieve a budget-packed bundle and its receipt for ``query``.
 
         Runs the T0 pipeline: lexical FTS retrieval, single-lane fusion, bounded
-        graph expansion, relevance-per-token scoring, and budget packing. The T2
-        vector lane, T3 extraction, and the rerank lane are gated off and fail
-        loud.
+        graph expansion, relevance-per-token scoring, and budget packing. T1
+        closure, the T2 vector lane, T3 extraction, and the rerank lane are gated
+        off and fail loud.
         """
         self._reject_unsupported(config)
         if self._graph is None:
@@ -125,7 +126,12 @@ class RetrievalKernel:
         if config.enable_vector_lane or config.tier == "T2":
             raise NotImplementedError(
                 "the T2 vector lane is not implemented in this kernel; "
-                "set enable_vector_lane=False and tier in {'T0', 'T1'}"
+                "set enable_vector_lane=False and tier='T0'"
+            )
+        if config.tier == "T1":
+            raise NotImplementedError(
+                "T1 reference closure is not implemented in this kernel; it lands in a "
+                "later stack. Use tier='T0' for the byte-exact floor."
             )
         if config.tier == "T3":
             raise NotImplementedError("T3 model extraction is not implemented in this kernel")
