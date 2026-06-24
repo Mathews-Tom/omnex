@@ -1,0 +1,80 @@
+{
+  "family": "prose",
+  "generated_by": "omnex-bench",
+  "tier": "T0",
+  "token_ledger": "whitespace word count (omnex.kernel.packer.count_tokens)",
+  "corpus": {
+    "directory": "prose",
+    "documents": 5,
+    "full_dump_tokens": 489
+  },
+  "omnex": {
+    "tier": "T0",
+    "budget": 200,
+    "bm25_profile": {
+      "text": 1.0,
+      "title": 2.0,
+      "breadcrumb": 1.5,
+      "summary": 1.0
+    },
+    "hop_budget_by_kind": {
+      "CONTAINS": 1,
+      "SIBLING": 0,
+      "CROSS_REF": 1
+    },
+    "confidence_decay": 0.9
+  },
+  "upper_bound_baseline": {
+    "name": "full_dump",
+    "role": "demoted_upper_bound"
+  },
+  "recall_honesty": "T0 is the lexical, byte-exact floor: it spends far fewer tokens than the full dump at equal recall, but its recall is lexical-only. Where a relevant unit shares no vocabulary with the query (the securing-traffic page in configure_tls), no T0 budget can surface it -- it is never a lexical candidate, so the recall ceiling below 1.0 is a genuine property of lexical retrieval, not the floor budget. T0 therefore trails embedding-based (chunk-and-embed) retrieval on such queries and makes no claim to beat embeddings at T0; the deferred T2 vector lane (Stack G) is what closes that recall gap. This family forward-references it, not parity.",
+  "tasks": [
+    {
+      "id": "configure_tls",
+      "query": "configure TLS ingress controller termination",
+      "gold_label_count": 3,
+      "equal_recall": 0.6666666666666666,
+      "tokens_at_equal_recall": {
+        "omnex_t0": 82,
+        "full_dump": 489
+      },
+      "recall": {
+        "omnex_t0": 0.6666666666666666,
+        "full_dump": 1.0
+      },
+      "omnex_below_full_dump_at_equal_recall": true,
+      "recall_basis": "lexical",
+      "recall_limitations": [
+        "Recall is lexical-only: a semantically distant unit can be missed unless a structural edge such as CROSS_REF reaches it.",
+        "Lexical recall trails embedding-based retrieval where query and content vocabulary diverge; this run makes no claim to beat embeddings."
+      ],
+      "reaches_full_recall": false
+    },
+    {
+      "id": "provision_storage",
+      "query": "provision durable persistent storage stateful workload",
+      "gold_label_count": 3,
+      "equal_recall": 1.0,
+      "tokens_at_equal_recall": {
+        "omnex_t0": 113,
+        "full_dump": 489
+      },
+      "recall": {
+        "omnex_t0": 1.0,
+        "full_dump": 1.0
+      },
+      "omnex_below_full_dump_at_equal_recall": true,
+      "recall_basis": "lexical",
+      "recall_limitations": [
+        "Recall is lexical-only: a semantically distant unit can be missed unless a structural edge such as CROSS_REF reaches it.",
+        "Lexical recall trails embedding-based retrieval where query and content vocabulary diverge; this run makes no claim to beat embeddings."
+      ],
+      "reaches_full_recall": true
+    }
+  ],
+  "latency": {
+    "omnex_p95_seconds": 0.08047812501899898,
+    "note": "environment-dependent; excluded from the determinism guarantee"
+  }
+}

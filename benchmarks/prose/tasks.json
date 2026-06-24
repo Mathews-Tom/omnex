@@ -1,0 +1,25 @@
+{
+  "family": "prose",
+  "corpus": ".",
+  "recall_target": 1.0,
+  "tasks": [
+    {
+      "id": "configure_tls",
+      "query": "configure TLS ingress controller termination",
+      "gold": [
+        {"label": "Ingress TLS section", "marker": "terminates TLS at the edge"},
+        {"label": "TLS secret manifest", "marker": "ingress-tls-cert"},
+        {"label": "Securing traffic page (semantically distant)", "marker": "negotiate a session key"}
+      ]
+    },
+    {
+      "id": "provision_storage",
+      "query": "provision durable persistent storage stateful workload",
+      "gold": [
+        {"label": "Persistent volume claims", "marker": "persistent volume claims"},
+        {"label": "Storage classes", "marker": "names a provisioner"},
+        {"label": "Snapshots", "marker": "point-in-time copy"}
+      ]
+    }
+  ]
+}
