@@ -19,6 +19,7 @@ def _receipt() -> Receipt:
         extraction_used=False,
         determinism_class="byte_exact",
         reference_closure_complete=False,
+        recall_basis="lexical",
     )
 
 
@@ -32,6 +33,7 @@ def test_receipt_records_its_fields() -> None:
     assert receipt.extraction_used is False
     assert receipt.determinism_class == "byte_exact"
     assert receipt.reference_closure_complete is False
+    assert receipt.recall_basis == "lexical"
 
 
 def test_receipt_is_frozen() -> None:
@@ -48,3 +50,17 @@ def test_equal_receipts_are_byte_identical() -> None:
 def test_distinct_receipts_differ() -> None:
     other = dataclasses.replace(_receipt(), determinism_class="pinned_reproducible")
     assert other != _receipt()
+
+
+def test_lexical_recall_limitations_are_surfaced() -> None:
+    limitations = _receipt().recall_limitations
+    assert limitations, "a lexical-only run must surface its recall limitation"
+    joined = " ".join(limitations).lower()
+    assert "lexical" in joined
+    assert "cross_ref" in joined
+    assert "embedding" in joined
+
+
+def test_vector_recall_has_no_lexical_limitation() -> None:
+    receipt = dataclasses.replace(_receipt(), recall_basis="lexical_plus_vector")
+    assert receipt.recall_limitations == ()

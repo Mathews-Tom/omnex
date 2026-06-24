@@ -109,6 +109,9 @@ class RetrievalKernel:
             extraction_used=False,
             determinism_class=_DETERMINISM_BY_TIER[config.tier],
             reference_closure_complete=bool(closure_ids) and closure_ids <= included,
+            # Only the lexical lane runs here; the vector lane is rejected above, so
+            # recall is lexical-only and the receipt says so.
+            recall_basis="lexical",
         )
         return bundle, receipt
 
