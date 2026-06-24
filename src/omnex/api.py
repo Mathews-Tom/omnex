@@ -44,11 +44,18 @@ def _route_sources(
     units: list[Unit] = []
     references: list[Reference] = []
     documents: list[Document] = []
+    seen: set[Path] = set()
     for source in sources:
         # Resolve to a canonical absolute path so a document's identity is stable
         # and an inter-document link (which resolves its target the same way) lands
-        # on the neighbor's own parsed units when both are indexed.
+        # on the neighbor's own parsed units when both are indexed. Resolving also
+        # collapses two paths to one file, so index the same physical source once:
+        # otherwise the full-dump baseline would count it twice while the units
+        # (deduplicated by id) would not.
         resolved = source.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
         adapter = select_adapter(resolved)
         document = adapter.ingest(resolved)
         documents.append(document)

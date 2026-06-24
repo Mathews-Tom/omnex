@@ -148,3 +148,12 @@ def test_inter_document_link_resolves_through_path_normalization() -> None:
     sources = [_INGRESS, non_normalized, _DISTRACTOR]
     bundle, _ = omnex.query_sources(sources, _QUESTION, _BUDGET, _t0_config())
     assert _SECURING_BODY in bundle.render()
+
+
+def test_duplicate_sources_do_not_inflate_the_baseline() -> None:
+    # The same physical file passed twice is indexed once, so the full-dump
+    # baseline counts it once and the token comparison stays honest.
+    once = omnex.query_sources(_SOURCES, _QUESTION, _BUDGET, _t0_config())[1]
+    twice = omnex.query_sources([*_SOURCES, _INGRESS], _QUESTION, _BUDGET, _t0_config())[1]
+    assert twice.baseline_tokens == once.baseline_tokens
+    assert twice.returned_tokens == once.returned_tokens

@@ -90,6 +90,16 @@ def test_claims_rejects_unstructured_plain_text(tmp_path: Path) -> None:
     assert ProseAdapter().claims(plain) is False
 
 
+def test_claims_rejects_source_and_config_files_with_hash_lines(tmp_path: Path) -> None:
+    # A source or config file whose extension is not prose is never sniffed, so a
+    # bare "#" comment or a divider line does not get it mis-claimed as prose; it
+    # falls through to fail-loud routing instead.
+    py = _write(tmp_path, "conf.py", "# configuration\nproject = 'x'\n")
+    yaml = _write(tmp_path, "mkdocs.yml", "site_name: Docs\n# ----\n")
+    assert ProseAdapter().claims(py) is False
+    assert ProseAdapter().claims(yaml) is False
+
+
 def test_ingest_sets_identity_hash_and_raw_token_count(tmp_path: Path) -> None:
     _, document, _ = _parsed(tmp_path, "doc.md", _MARKDOWN)
     assert document.modality == "prose"
