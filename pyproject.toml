@@ -29,6 +29,9 @@ dependencies = [
 embed = ["fastembed>=0.3"]
 mcp = ["mcp>=1.0"]
 
+[project.scripts]
+omnex = "omnex.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/Mathews-Tom/omnex"
 Repository = "https://github.com/Mathews-Tom/omnex"
