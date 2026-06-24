@@ -7,12 +7,13 @@ bounded graph expansion, and budget-aware packing, emitting a ``ContextBundle``
 and an auditable ``Receipt``.
 
 The byte-exact tiers are wired here: T0 (bounded floor) and T1, which adds the
-deterministic transitive reference closure. The T2 vector lane, T3 model
-extraction, and the rerank lane are gated off and fail loud, so a run never
-silently claims a guarantee it cannot keep. T0 and T1 are byte-exact: the same
-corpus, config, and query produce a byte-identical bundle and receipt.
-
-No model load, network, or file-system access.
+deterministic transitive reference closure. T2 adds the opt-in vector lane, fused
+with the lexical lane; T3 model extraction and the rerank lane are gated off and
+fail loud, so a run never silently claims a guarantee it cannot keep. T0 and T1
+are byte-exact (same corpus, config, and query -> byte-identical bundle and
+receipt) and load no model and touch no network or file system. T2 is the weaker
+pinned-reproducible class: enabling it loads the pinned embedding model on first
+use, which the receipt records.
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ from omnex.kernel.fusion import combine
 from omnex.kernel.index import FtsIndex
 from omnex.kernel.packer import Candidate, count_tokens, pack_efficiently, score_candidate
 from omnex.kernel.receipt import Receipt
-from omnex.kernel.vector import VectorIndex
+from omnex.kernel.vector import MISSING_EMBED_EXTRA, VectorIndex, vector_lane_available
 
 __all__ = [
     "DeterminismClass",
@@ -107,10 +108,17 @@ class RetrievalKernel:
         self._vector: VectorIndex | None = None
 
     def index(self, corpus: Sequence[Unit], references: Sequence[Reference] = ()) -> None:
-        """Index a corpus of units and build the StructureGraph from its edges."""
+        """Index a corpus of units and build the StructureGraph from its edges.
+
+        Rebuilds every corpus-derived structure wholesale, including invalidating
+        the lazily built vector lane, so re-indexing a reused kernel never leaves a
+        stale embedding cache that would return wrong relevance or reference units
+        absent from the rebuilt graph.
+        """
         self._index.index_units(corpus)
         self._graph = build_graph(corpus, references)
         self._units = {unit.id: unit for unit in corpus}
+        self._vector = None
 
     def retrieve(
         self, query: str, budget_tokens: int, config: KernelConfig
@@ -250,6 +258,10 @@ class RetrievalKernel:
                 "the vector lane is the T2 tier; set tier='T2' to enable it so the "
                 "receipt never claims byte_exact for a vector-assisted run"
             )
+        if config.enable_vector_lane and not vector_lane_available():
+            # Fail fast at the gate, before embedding the corpus, when the opt-in
+            # dependency is absent rather than deep inside the first embed call.
+            raise ModuleNotFoundError(MISSING_EMBED_EXTRA)
         if config.tier == "T3":
             raise NotImplementedError("T3 model extraction is not implemented in this kernel")
         if config.enable_rerank:

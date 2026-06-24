@@ -32,6 +32,14 @@ from omnex.ir.types import Unit
 # of benchmark code. Its identity is recorded in the receipt's determinism class.
 DEFAULT_EMBED_MODEL = "BAAI/bge-small-en-v1.5"
 
+# Actionable hint raised whenever the lane is requested without the optional
+# dependency installed, shared by the kernel's fail-fast gate and this module's
+# lazy load so the message stays consistent.
+MISSING_EMBED_EXTRA = (
+    "the T2 vector lane requires the optional 'embed' extra; "
+    "install it with `pip install omnex[embed]`"
+)
+
 
 def vector_lane_available() -> bool:
     """Whether the optional ``fastembed`` dependency can be imported.
@@ -86,10 +94,7 @@ class VectorIndex:
             try:
                 from fastembed import TextEmbedding
             except ModuleNotFoundError as exc:
-                raise ModuleNotFoundError(
-                    "the T2 vector lane requires the optional 'embed' extra; "
-                    "install it with `pip install omnex[embed]`"
-                ) from exc
+                raise ModuleNotFoundError(MISSING_EMBED_EXTRA) from exc
             self._model = TextEmbedding(self._model_name)
         return self._model
 
