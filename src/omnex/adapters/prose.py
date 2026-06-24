@@ -478,6 +478,120 @@ def _structural_edges(nodes: Sequence[_Node]) -> list[Reference]:
     return edges
 
 
+# Inline Markdown link: [text](dest), excluding images; captures the dest URL.
+_INLINE_LINK_RE = re.compile(r"(?<!!)\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+[^)]*)?\)")
+# A URL scheme (http:, mailto:, ...) marks an external link.
+_SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.\-]*:")
+# reST internal references: `Phrase`_ and word_ (single trailing underscore).
+_REST_PHRASE_REF_RE = re.compile(r"`([^`]+)`_")
+_REST_SIMPLE_REF_RE = re.compile(r"(?<![\w`])([A-Za-z][\w.\-]*)_(?![\w_])")
+
+_CROSSREF_INTRA_CONF = 1.0
+_CROSSREF_INTER_CONF = 0.9
+
+
+def _slug(title: str) -> str:
+    """GitHub-style heading slug: lowercase, drop punctuation, spaces to hyphens."""
+    lowered = re.sub(r"[^\w\s-]", "", title.strip().lower())
+    return re.sub(r"\s+", "-", lowered)
+
+
+def _section_slugs(nodes: Sequence[_Node]) -> dict[str, str]:
+    """Map each section's anchor slug to its unit id (first occurrence wins)."""
+    slugs: dict[str, str] = {}
+    for node in nodes:
+        if node.is_section and node.unit.title:
+            slugs.setdefault(_slug(node.unit.title), node.unit.id)
+    return slugs
+
+
+def _section_titles(nodes: Sequence[_Node]) -> dict[str, str]:
+    """Map each section's lowercased title to its unit id (for reST references)."""
+    titles: dict[str, str] = {}
+    for node in nodes:
+        if node.is_section and node.unit.title:
+            titles.setdefault(node.unit.title.strip().lower(), node.unit.id)
+    return titles
+
+
+def _neighbor_section_id(base_uri: str, dest: str) -> str | None:
+    """Resolve an inter-document link to a neighbor section's unit id, or None.
+
+    The link path is resolved relative to the source document; the neighbor is
+    ingested and parsed exactly as the corpus would, so the returned id matches
+    the neighbor's own parsed unit when both are indexed under the same path. A
+    non-prose, missing, or unresolvable target yields None (no edge), never a
+    fabricated one. An anchor selects the section whose slug matches; without an
+    anchor the neighbor's first (root) section is used.
+    """
+    path_part, _, anchor = dest.partition("#")
+    if not path_part:
+        return None
+    target = (Path(base_uri).parent / path_part).resolve()
+    if target.suffix.lower() not in _PROSE_SUFFIXES or not target.is_file():
+        return None
+    document = ProseAdapter().ingest(target)
+    sections = [unit for unit in ProseAdapter().parse(document) if unit.kind == "SECTION"]
+    if not sections:
+        return None
+    if anchor:
+        slug = anchor.strip().lower()
+        return next((unit.id for unit in sections if _slug(unit.title or "") == slug), None)
+    return sections[0].id
+
+
+def _resolve_anchor(base_uri: str, dest: str, slugs: dict[str, str]) -> tuple[str, float] | None:
+    """Resolve a Markdown link dest to a (unit id, confidence), or None."""
+    if dest.startswith("#"):
+        target = slugs.get(dest[1:].strip().lower())
+        return (target, _CROSSREF_INTRA_CONF) if target is not None else None
+    if _SCHEME_RE.match(dest) or dest.startswith("//"):
+        return None
+    target = _neighbor_section_id(base_uri, dest)
+    return (target, _CROSSREF_INTER_CONF) if target is not None else None
+
+
+def _markdown_crossref_edges(document: Document, nodes: Sequence[_Node]) -> list[Reference]:
+    """Recover CROSS_REF edges from Markdown inline anchor and document links."""
+    slugs = _section_slugs(nodes)
+    edges: list[Reference] = []
+    for node in nodes:
+        if node.unit.protect:
+            continue
+        for dest in _INLINE_LINK_RE.findall(node.unit.text):
+            resolved = _resolve_anchor(document.uri, dest, slugs)
+            if resolved is not None and resolved[0] != node.unit.id:
+                edges.append(
+                    Reference(node.unit.id, resolved[0], "CROSS_REF", resolved[1], (dest,))
+                )
+    return edges
+
+
+def _rest_crossref_edges(nodes: Sequence[_Node]) -> list[Reference]:
+    """Recover CROSS_REF edges from reST internal section references."""
+    titles = _section_titles(nodes)
+    edges: list[Reference] = []
+    for node in nodes:
+        if node.unit.protect:
+            continue
+        names = _REST_PHRASE_REF_RE.findall(node.unit.text)
+        names += _REST_SIMPLE_REF_RE.findall(node.unit.text)
+        for name in names:
+            target = titles.get(name.strip().lower())
+            if target is not None and target != node.unit.id:
+                edges.append(
+                    Reference(node.unit.id, target, "CROSS_REF", _CROSSREF_INTRA_CONF, (name,))
+                )
+    return edges
+
+
+def _crossref_edges(document: Document, nodes: Sequence[_Node], flavor: Flavor) -> list[Reference]:
+    """Recover CROSS_REF edges for the document's flavor."""
+    if flavor == "rest":
+        return _rest_crossref_edges(nodes)
+    return _markdown_crossref_edges(document, nodes)
+
+
 def _dedup_sort(refs: Sequence[Reference]) -> list[Reference]:
     """Collapse duplicate (source, target, kind) edges and sort canonically.
 
@@ -549,16 +663,21 @@ class ProseAdapter:
     def link(self, document: Document, units: Sequence[Unit]) -> list[Reference]:
         """Recover the typed edges among ``units`` as Reference values.
 
-        Re-parses the source into the heading tree and recovers the structural
-        edges: ``CONTAINS`` from a section to each direct child (sub-section or
-        content unit) and ``SIBLING`` between adjacent sections that share a
-        parent. Deterministic and model-free.
+        Re-parses the source into the heading tree and recovers, deterministically
+        and model-free: ``CONTAINS`` from a section to each direct child,
+        ``SIBLING`` between adjacent sections sharing a parent, and ``CROSS_REF``
+        for intra-document anchor links and inter-document links resolved to a
+        neighbor section. link fails loud when the units it is given do not match
+        the parsed source.
         """
+        flavor = _flavor(document.uri)
         source = read_source(document)
-        nodes = _build_nodes(document, source, _blocks(source, _flavor(document.uri)))
+        nodes = _build_nodes(document, source, _blocks(source, flavor))
         if {node.unit.id for node in nodes} != {unit.id for unit in units}:
             raise ValueError("link received units that do not match the parsed source")
-        return _dedup_sort(_structural_edges(nodes))
+        edges = _structural_edges(nodes)
+        edges += _crossref_edges(document, nodes, flavor)
+        return _dedup_sort(edges)
 
     def capabilities(self) -> AdapterCapabilities:
         """Report emittable kinds, determinism, and model-extraction opt-in."""
