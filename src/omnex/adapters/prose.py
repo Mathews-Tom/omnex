@@ -25,6 +25,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import lru_cache
+from itertools import pairwise
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
@@ -33,6 +34,7 @@ from omnex.adapters.base import AdapterCapabilities
 from omnex.ir.types import (
     Document,
     Reference,
+    ReferenceKind,
     Span,
     Unit,
     UnitKind,
@@ -369,59 +371,395 @@ def _build_unit(
     )
 
 
-def _assemble(document: Document, source: str, blocks: Sequence[_Block]) -> list[Unit]:
-    """Build the heading tree from ``blocks`` into breadcrumb-stamped units."""
-    units: list[Unit] = []
-    stack: list[tuple[int, str]] = []
+@dataclass(frozen=True, slots=True)
+class _Node:
+    """An assembled unit with its tree position: enclosing section and level."""
+
+    unit: Unit
+    parent: int | None
+    level: int
+    is_section: bool
+
+
+def _build_nodes(document: Document, source: str, blocks: Sequence[_Block]) -> list[_Node]:
+    """Assemble ``blocks`` into tree nodes: units plus parent/section structure.
+
+    The heading stack tracks open sections; each block becomes a node whose
+    ``parent`` is the index of its enclosing section node (None at the top
+    level). Breadcrumbs are the section path, identical to what parsing emits. A
+    long unprotected body is split into several sibling content nodes.
+    """
+    nodes: list[_Node] = []
+    stack: list[tuple[int, int, str]] = []  # (heading level, node index, title)
     encode = _encoder().encode
     for block in blocks:
         if block.kind == "HEADING":
             while stack and stack[-1][0] >= block.level:
                 stack.pop()
-            breadcrumb = tuple(title for _, title in stack)
-            units.append(
-                _build_unit(
-                    document,
-                    source,
-                    "SECTION",
-                    block.start,
-                    block.end,
-                    block.title,
-                    breadcrumb,
-                    False,
-                )
+            breadcrumb = tuple(title for _, _, title in stack)
+            parent = stack[-1][1] if stack else None
+            unit = _build_unit(
+                document, source, "SECTION", block.start, block.end, block.title, breadcrumb, False
             )
-            stack.append((block.level, block.title or ""))
+            nodes.append(_Node(unit, parent, block.level, True))
+            stack.append((block.level, len(nodes) - 1, block.title or ""))
             continue
         unit_kind, protect = _BLOCK_UNIT[block.kind]
-        breadcrumb = tuple(title for _, title in stack)
+        breadcrumb = tuple(title for _, _, title in stack)
+        parent = stack[-1][1] if stack else None
         text = source[block.start : block.end]
         if not protect and len(encode(text)) > _SECTION_TOKEN_BUDGET:
-            for piece_start, piece_end in split_on_budget(text, _SECTION_TOKEN_BUDGET, encode):
-                units.append(
-                    _build_unit(
-                        document,
-                        source,
-                        unit_kind,
-                        block.start + piece_start,
-                        block.start + piece_end,
-                        None,
-                        breadcrumb,
-                        protect,
-                    )
-                )
+            spans = [
+                (block.start + piece_start, block.start + piece_end)
+                for piece_start, piece_end in split_on_budget(text, _SECTION_TOKEN_BUDGET, encode)
+            ]
         else:
-            units.append(
-                _build_unit(
-                    document, source, unit_kind, block.start, block.end, None, breadcrumb, protect
-                )
+            spans = [(block.start, block.end)]
+        for span_start, span_end in spans:
+            unit = _build_unit(
+                document, source, unit_kind, span_start, span_end, None, breadcrumb, protect
             )
-    return units
+            nodes.append(_Node(unit, parent, 0, False))
+    return nodes
+
+
+def _assemble(document: Document, source: str, blocks: Sequence[_Block]) -> list[Unit]:
+    """Build the heading tree from ``blocks`` into breadcrumb-stamped units."""
+    return [node.unit for node in _build_nodes(document, source, blocks)]
 
 
 def _blocks(source: str, flavor: Flavor) -> list[_Block]:
     """Scan ``source`` into typed blocks for the given flavor."""
     return _parse_rest(source) if flavor == "rest" else _parse_markdown(source)
+
+
+# ---------------------------------------------------------------------------
+# Edge recovery
+# ---------------------------------------------------------------------------
+
+# Per-kind edge confidence. CONTAINS is structural and certain; SIBLING is a
+# weaker adjacency signal; cross-references decay with document distance and
+# citations are weaker still.
+_CONTAINS_CONF = 1.0
+_SIBLING_CONF = 0.5
+
+
+def _ref(
+    source_id: str, target_id: str, kind: ReferenceKind, confidence: float, evidence: str
+) -> Reference:
+    """Build one typed edge with a single evidence string."""
+    return Reference(
+        source_id=source_id,
+        target_id=target_id,
+        kind=kind,
+        confidence=confidence,
+        evidence=(evidence,),
+    )
+
+
+def _structural_edges(nodes: Sequence[_Node]) -> list[Reference]:
+    """Recover CONTAINS (section to child) and SIBLING (adjacent sections) edges."""
+    edges: list[Reference] = []
+    for node in nodes:
+        if node.parent is not None:
+            parent = nodes[node.parent].unit
+            crumb = " / ".join(node.unit.breadcrumb) or parent.title or parent.id
+            edges.append(_ref(parent.id, node.unit.id, "CONTAINS", _CONTAINS_CONF, crumb))
+    siblings: dict[int | None, list[int]] = {}
+    for index, node in enumerate(nodes):
+        if node.is_section:
+            siblings.setdefault(node.parent, []).append(index)
+    for members in siblings.values():
+        for left, right in pairwise(members):
+            first, second = nodes[left].unit, nodes[right].unit
+            shared = " / ".join(first.breadcrumb) or "(document root)"
+            edges.append(_ref(first.id, second.id, "SIBLING", _SIBLING_CONF, shared))
+            edges.append(_ref(second.id, first.id, "SIBLING", _SIBLING_CONF, shared))
+    return edges
+
+
+# Inline Markdown link: [text](dest), excluding images; captures the dest URL.
+_INLINE_LINK_RE = re.compile(r"(?<!!)\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+[^)]*)?\)")
+# A URL scheme (http:, mailto:, ...) marks an external link.
+_SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.\-]*:")
+# reST internal references: `Phrase`_ and word_ (single trailing underscore).
+_REST_PHRASE_REF_RE = re.compile(r"`([^`]+)`_")
+_REST_SIMPLE_REF_RE = re.compile(r"(?<![\w`])([A-Za-z][\w.\-]*)_(?![\w_])")
+
+_CROSSREF_INTRA_CONF = 1.0
+_CROSSREF_INTER_CONF = 0.9
+
+# Within one link() call, neighbor documents are parsed once and reused: maps a
+# resolved neighbor path to its SECTION units (empty when missing or non-prose).
+NeighborCache = dict[str, list[Unit]]
+
+
+def _slug(title: str) -> str:
+    """GitHub-style heading slug: lowercase, drop punctuation, spaces to hyphens."""
+    lowered = re.sub(r"[^\w\s-]", "", title.strip().lower())
+    return re.sub(r"\s+", "-", lowered)
+
+
+def _section_slugs(nodes: Sequence[_Node]) -> dict[str, str]:
+    """Map each section's anchor slug to its unit id (first occurrence wins)."""
+    slugs: dict[str, str] = {}
+    for node in nodes:
+        if node.is_section and node.unit.title:
+            slugs.setdefault(_slug(node.unit.title), node.unit.id)
+    return slugs
+
+
+def _section_titles(nodes: Sequence[_Node]) -> dict[str, str]:
+    """Map each section's lowercased title to its unit id (for reST references)."""
+    titles: dict[str, str] = {}
+    for node in nodes:
+        if node.is_section and node.unit.title:
+            titles.setdefault(node.unit.title.strip().lower(), node.unit.id)
+    return titles
+
+
+def _neighbor_sections(target: Path, cache: NeighborCache) -> list[Unit]:
+    """Return the neighbor's SECTION units, parsing it at most once per link call.
+
+    A missing or non-prose target caches and returns an empty list, so repeated
+    links to the same neighbor neither re-read nor re-parse it within one call.
+    """
+    key = str(target)
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+    if target.suffix.lower() not in _PROSE_SUFFIXES or not target.is_file():
+        cache[key] = []
+        return []
+    document = ProseAdapter().ingest(target)
+    sections = [unit for unit in ProseAdapter().parse(document) if unit.kind == "SECTION"]
+    cache[key] = sections
+    return sections
+
+
+def _neighbor_section_id(base_uri: str, dest: str, cache: NeighborCache) -> str | None:
+    """Resolve an inter-document link to a neighbor section's unit id, or None.
+
+    The link path is resolved relative to the source document; the neighbor is
+    ingested and parsed exactly as the corpus would, so the returned id matches
+    the neighbor's own parsed unit when both are indexed under the same path. A
+    non-prose, missing, or unresolvable target yields None (no edge), never a
+    fabricated one. An anchor selects the section whose slug matches; without an
+    anchor the neighbor's first (root) section is used.
+    """
+    path_part, _, anchor = dest.partition("#")
+    if not path_part:
+        return None
+    sections = _neighbor_sections((Path(base_uri).parent / path_part).resolve(), cache)
+    if not sections:
+        return None
+    if anchor:
+        slug = anchor.strip().lower()
+        return next((unit.id for unit in sections if _slug(unit.title or "") == slug), None)
+    return sections[0].id
+
+
+def _resolve_anchor(
+    base_uri: str, dest: str, slugs: dict[str, str], cache: NeighborCache
+) -> tuple[str, float] | None:
+    """Resolve a Markdown link dest to a (unit id, confidence), or None."""
+    if dest.startswith("#"):
+        target = slugs.get(dest[1:].strip().lower())
+        return (target, _CROSSREF_INTRA_CONF) if target is not None else None
+    if _SCHEME_RE.match(dest) or dest.startswith("//"):
+        return None
+    target = _neighbor_section_id(base_uri, dest, cache)
+    return (target, _CROSSREF_INTER_CONF) if target is not None else None
+
+
+def _markdown_crossref_edges(
+    document: Document, nodes: Sequence[_Node], cache: NeighborCache
+) -> list[Reference]:
+    """Recover CROSS_REF edges from Markdown inline anchor and document links."""
+    slugs = _section_slugs(nodes)
+    edges: list[Reference] = []
+    for node in nodes:
+        if node.unit.protect:
+            continue
+        for dest in _INLINE_LINK_RE.findall(node.unit.text):
+            resolved = _resolve_anchor(document.uri, dest, slugs, cache)
+            if resolved is not None and resolved[0] != node.unit.id:
+                edges.append(
+                    Reference(node.unit.id, resolved[0], "CROSS_REF", resolved[1], (dest,))
+                )
+    return edges
+
+
+def _rest_crossref_edges(nodes: Sequence[_Node]) -> list[Reference]:
+    """Recover CROSS_REF edges from reST internal section references."""
+    titles = _section_titles(nodes)
+    edges: list[Reference] = []
+    for node in nodes:
+        if node.unit.protect:
+            continue
+        names = _REST_PHRASE_REF_RE.findall(node.unit.text)
+        names += _REST_SIMPLE_REF_RE.findall(node.unit.text)
+        for name in names:
+            target = titles.get(name.strip().lower())
+            if target is not None and target != node.unit.id:
+                edges.append(
+                    Reference(node.unit.id, target, "CROSS_REF", _CROSSREF_INTRA_CONF, (name,))
+                )
+    return edges
+
+
+def _crossref_edges(
+    document: Document, nodes: Sequence[_Node], flavor: Flavor, cache: NeighborCache
+) -> list[Reference]:
+    """Recover CROSS_REF edges for the document's flavor."""
+    if flavor == "rest":
+        return _rest_crossref_edges(nodes)
+    return _markdown_crossref_edges(document, nodes, cache)
+
+
+# Footnote reference [^id] and its definition line [^id]: ...
+_FOOTNOTE_REF_RE = re.compile(r"\[\^([^\]\s]+)\]")
+_FOOTNOTE_DEF_RE = re.compile(r"^[ \t]*\[\^([^\]\s]+)\]:", re.MULTILINE)
+# Reference-style link [text][label] (label empty => collapsed to text) and a
+# link reference definition [label]: dest (a footnote's ^label is excluded).
+_REF_LINK_RE = re.compile(r"(?<!!)\[([^\]]+)\]\[([^\]]*)\]")
+_REF_DEF_RE = re.compile(r"^[ \t]*\[([^\]^]+)\]:[ \t]*(\S+)", re.MULTILINE)
+# reST footnote/citation reference [id]_ and its definition .. [id] ...
+_REST_LABEL_REF_RE = re.compile(r"\[([\w#.\-]+)\]_")
+_REST_LABEL_DEF_RE = re.compile(r"^[ \t]*\.\.[ \t]+\[([\w#.\-]+)\]", re.MULTILINE)
+
+_CITES_FOOTNOTE_CONF = 0.6
+_CITES_REFLINK_CONF = 0.7
+
+
+def _footnote_defs(nodes: Sequence[_Node]) -> dict[str, str]:
+    """Map each footnote id to the unit that defines it (first occurrence wins)."""
+    defs: dict[str, str] = {}
+    for node in nodes:
+        if node.unit.protect:
+            continue
+        for match in _FOOTNOTE_DEF_RE.finditer(node.unit.text):
+            defs.setdefault(match.group(1), node.unit.id)
+    return defs
+
+
+def _reflink_defs(nodes: Sequence[_Node]) -> dict[str, str]:
+    """Map each link reference label (lowercased) to its destination string."""
+    defs: dict[str, str] = {}
+    for node in nodes:
+        if node.unit.protect:
+            continue
+        for match in _REF_DEF_RE.finditer(node.unit.text):
+            defs.setdefault(match.group(1).strip().lower(), match.group(2))
+    return defs
+
+
+def _markdown_cites_edges(
+    document: Document, nodes: Sequence[_Node], cache: NeighborCache
+) -> list[Reference]:
+    """Recover CITES edges from Markdown footnotes and reference-style links."""
+    footnotes = _footnote_defs(nodes)
+    reflinks = _reflink_defs(nodes)
+    slugs = _section_slugs(nodes)
+    edges: list[Reference] = []
+    for node in nodes:
+        if node.unit.protect:
+            continue
+        text = node.unit.text
+        for match in _FOOTNOTE_REF_RE.finditer(text):
+            line_start = text.rfind("\n", 0, match.start()) + 1
+            is_definition = (
+                text[line_start : match.start()].strip() == ""
+                and text[match.end() : match.end() + 1] == ":"
+            )
+            if is_definition:
+                continue  # a line-anchored [^id]: is the definition's own marker
+            target = footnotes.get(match.group(1))
+            if target is not None and target != node.unit.id:
+                edges.append(
+                    Reference(
+                        node.unit.id,
+                        target,
+                        "CITES",
+                        _CITES_FOOTNOTE_CONF,
+                        (f"[^{match.group(1)}]",),
+                    )
+                )
+        for match in _REF_LINK_RE.finditer(text):
+            label = (match.group(2) or match.group(1)).strip().lower()
+            dest = reflinks.get(label)
+            if dest is None:
+                continue
+            resolved = _resolve_anchor(document.uri, dest, slugs, cache)
+            if resolved is not None and resolved[0] != node.unit.id:
+                edges.append(
+                    Reference(
+                        node.unit.id, resolved[0], "CITES", _CITES_REFLINK_CONF, (f"[{label}]",)
+                    )
+                )
+    return edges
+
+
+def _rest_cites_edges(nodes: Sequence[_Node]) -> list[Reference]:
+    """Recover CITES edges from reST footnote and citation references."""
+    defs: dict[str, str] = {}
+    for node in nodes:
+        if node.unit.protect:
+            continue
+        for match in _REST_LABEL_DEF_RE.finditer(node.unit.text):
+            defs.setdefault(match.group(1), node.unit.id)
+    edges: list[Reference] = []
+    for node in nodes:
+        if node.unit.protect:
+            continue
+        for match in _REST_LABEL_REF_RE.finditer(node.unit.text):
+            target = defs.get(match.group(1))
+            if target is not None and target != node.unit.id:
+                edges.append(
+                    Reference(
+                        node.unit.id,
+                        target,
+                        "CITES",
+                        _CITES_FOOTNOTE_CONF,
+                        (f"[{match.group(1)}]",),
+                    )
+                )
+    return edges
+
+
+def _cites_edges(
+    document: Document, nodes: Sequence[_Node], flavor: Flavor, cache: NeighborCache
+) -> list[Reference]:
+    """Recover CITES edges for the document's flavor."""
+    if flavor == "rest":
+        return _rest_cites_edges(nodes)
+    return _markdown_cites_edges(document, nodes, cache)
+
+
+def _dedup_sort(refs: Sequence[Reference]) -> list[Reference]:
+    """Collapse duplicate (source, target, kind) edges and sort canonically.
+
+    Several occurrences that resolve to the same edge fold into one Reference
+    whose evidence is the union of contributing strings and whose confidence is
+    the strongest seen, so the edge set is deterministic regardless of scan order.
+    """
+    grouped: dict[tuple[str, str, ReferenceKind], tuple[float, set[str]]] = {}
+    for ref in refs:
+        key = (ref.source_id, ref.target_id, ref.kind)
+        confidence, evidence = grouped.get(key, (0.0, set()))
+        grouped[key] = (max(confidence, ref.confidence), evidence | set(ref.evidence))
+    out = [
+        Reference(
+            source_id=source_id,
+            target_id=target_id,
+            kind=kind,
+            confidence=confidence,
+            evidence=tuple(sorted(evidence)),
+        )
+        for (source_id, target_id, kind), (confidence, evidence) in grouped.items()
+    ]
+    out.sort(key=lambda ref: (ref.source_id, ref.target_id, ref.kind, ref.evidence))
+    return out
 
 
 class ProseAdapter:
@@ -467,13 +805,25 @@ class ProseAdapter:
         return _assemble(document, source, blocks)
 
     def link(self, document: Document, units: Sequence[Unit]) -> list[Reference]:
-        """Recover the typed edges among ``units``.
+        """Recover the typed edges among ``units`` as Reference values.
 
-        The structural tree (``CONTAINS`` / ``SIBLING``) and the cross-reference
-        edges (``CROSS_REF`` / ``CITES``) are recovered by the linking pass added
-        next in this stack; this parse slice emits units only.
+        Re-parses the source into the heading tree and recovers, deterministically
+        and model-free: ``CONTAINS`` from a section to each direct child,
+        ``SIBLING`` between adjacent sections sharing a parent, ``CROSS_REF`` for
+        intra-document anchor links and inter-document links resolved to a
+        neighbor section, and ``CITES`` for footnotes and reference-style links.
+        link fails loud when the units it is given do not match the parsed source.
         """
-        return []
+        flavor = _flavor(document.uri)
+        source = read_source(document)
+        nodes = _build_nodes(document, source, _blocks(source, flavor))
+        if {node.unit.id for node in nodes} != {unit.id for unit in units}:
+            raise ValueError("link received units that do not match the parsed source")
+        cache: NeighborCache = {}
+        edges = _structural_edges(nodes)
+        edges += _crossref_edges(document, nodes, flavor, cache)
+        edges += _cites_edges(document, nodes, flavor, cache)
+        return _dedup_sort(edges)
 
     def capabilities(self) -> AdapterCapabilities:
         """Report emittable kinds, determinism, and model-extraction opt-in."""
