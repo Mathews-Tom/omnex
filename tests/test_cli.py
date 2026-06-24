@@ -15,7 +15,8 @@ from pathlib import Path
 from click.testing import CliRunner, Result
 
 import omnex
-from omnex.cli import _render_markdown, default_config, main
+from omnex import api
+from omnex.cli import _collect_files, _render_markdown, default_config, main
 
 _FIXTURES = Path(__file__).resolve().parent / "fixtures"
 _PAYMENTS = _FIXTURES / "payments_openapi.json"
@@ -121,3 +122,68 @@ def test_unclaimable_source_fails_loud() -> None:
         result = runner.invoke(main, ["index", "mystery.bin"])
     assert result.exit_code != 0
     assert isinstance(result.exception, (ValueError, SystemExit))
+
+
+def test_default_budget_path_is_exercised() -> None:
+    # Omitting --budget falls back to the surface default; the path must still
+    # produce a valid, token-bounded result.
+    result = CliRunner().invoke(main, ["query", str(_PAYMENTS), _QUESTION, "--format", "json"])
+    assert result.exit_code == 0
+    receipt = json.loads(result.output)["receipt"]
+    assert receipt["returned_tokens"] < receipt["baseline_tokens"]
+
+
+def test_markdown_rows_match_receipt_fields() -> None:
+    # Guards Markdown schema-completeness: every Receipt field is rendered, so the
+    # Markdown and JSON formats cannot drift if a field is added or renamed.
+    bundle, receipt = omnex.query_sources([_PAYMENTS], _QUESTION, _BUDGET, default_config())
+    rendered = _render_markdown(bundle, receipt)
+    for field in (
+        "returned_tokens",
+        "baseline_tokens",
+        "determinism_class",
+        "recall_basis",
+        "model_used",
+        "model_version",
+        "extraction_used",
+        "reference_closure_complete",
+    ):
+        assert f"- {field}: {getattr(receipt, field)}" in rendered
+    assert f"- tiers_run: {', '.join(receipt.tiers_run)}" in rendered
+
+
+def test_index_counts_match_routing() -> None:
+    units, references, documents = api._route_sources([_PAYMENTS])
+    result = CliRunner().invoke(main, ["index", str(_PAYMENTS)])
+    assert result.exit_code == 0
+    assert result.output.strip() == (
+        f"indexed {len(documents)} document(s), {len(units)} unit(s), "
+        f"{len(references)} reference(s)"
+    )
+
+
+def test_directory_corpus_is_deterministic() -> None:
+    docs = _FIXTURES / "tls_docs"
+    question = "How do I configure TLS for the ingress controller?"
+    first = CliRunner().invoke(main, ["query", str(docs), question, "--budget", "200"])
+    second = CliRunner().invoke(main, ["query", str(docs), question, "--budget", "200"])
+    assert first.exit_code == 0
+    assert first.output.strip()
+    assert first.output == second.output
+    indexed = CliRunner().invoke(main, ["index", str(docs)])
+    assert indexed.exit_code == 0
+    assert "3 document(s)" in indexed.output
+
+
+def test_collect_files_skips_hidden_entries_and_sorts() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        base = Path("corpus")
+        (base / ".hidden").mkdir(parents=True)
+        (base / ".hidden" / "skip.md").write_text("# hidden\n")
+        (base / ".dotfile.md").write_text("# dot\n")
+        (base / "b.md").write_text("# B\n")
+        (base / "a.md").write_text("# A\n")
+        # Hidden files and files under hidden directories are skipped; the rest
+        # are returned in sorted order so routing is deterministic.
+        assert _collect_files([base]) == [base / "a.md", base / "b.md"]
