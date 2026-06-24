@@ -148,15 +148,19 @@ def test_protected_unit_is_never_compressed_or_elided_end_to_end() -> None:
             assert money.mode in ("INCLUDE", "SKIP")
 
 
-def test_t2_vector_request_raises() -> None:
+def test_t2_tier_without_vector_lane_raises() -> None:
+    # T2 and the vector lane are one capability: a T2 tier without the lane would
+    # silently run as the lexical floor, so the kernel rejects the incoherent pair.
     kernel = _indexed()
-    with pytest.raises(NotImplementedError, match="T2 vector lane"):
-        kernel.retrieve("payment", 100, _config(tier="T2", enable_vector_lane=True))
+    with pytest.raises(ValueError, match="enable_vector_lane=True"):
+        kernel.retrieve("payment", 100, _config(tier="T2", enable_vector_lane=False))
 
 
-def test_enable_vector_lane_raises_even_at_t0() -> None:
+def test_vector_lane_outside_t2_raises() -> None:
+    # The lane without the T2 tier would let the byte_exact label cover a
+    # vector-assisted run, so enabling it at T0 fails loud.
     kernel = _indexed()
-    with pytest.raises(NotImplementedError, match="vector lane"):
+    with pytest.raises(ValueError, match="tier='T2'"):
         kernel.retrieve("payment", 100, _config(enable_vector_lane=True))
 
 
