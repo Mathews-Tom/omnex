@@ -90,6 +90,7 @@ def test_top_level_exports_are_present() -> None:
         "KernelConfig",
         "Tier",
         "DeterminismClass",
+        "EmbeddingProvenance",
         "Document",
         "Span",
         "Unit",

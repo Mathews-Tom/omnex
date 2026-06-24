@@ -17,7 +17,13 @@ from __future__ import annotations
 from omnex.api import index, index_sources, query, query_sources
 from omnex.ir.types import Document, Reference, Span, Unit
 from omnex.kernel.bundle import ContextBundle
-from omnex.kernel.config import DeterminismClass, KernelConfig, RecallBasis, Tier
+from omnex.kernel.config import (
+    DeterminismClass,
+    EmbeddingProvenance,
+    KernelConfig,
+    RecallBasis,
+    Tier,
+)
 from omnex.kernel.receipt import Receipt
 
 __version__ = "0.1.0"
@@ -26,6 +32,7 @@ __all__ = [
     "ContextBundle",
     "DeterminismClass",
     "Document",
+    "EmbeddingProvenance",
     "KernelConfig",
     "RecallBasis",
     "Receipt",
