@@ -37,6 +37,7 @@ _RECEIPT_KEYS = {
     "reference_closure_complete",
     "recall_basis",
     "recall_limitations",
+    "embedding_provenance",
 }
 
 
@@ -66,6 +67,7 @@ def test_query_json_receipt_has_expected_shape() -> None:
     assert payload["receipt"]["extraction_used"] is False
     assert payload["receipt"]["model_version"] is None
     assert payload["receipt"]["determinism_class"] == "byte_exact"
+    assert payload["receipt"]["embedding_provenance"] is None
 
 
 def test_cli_matches_library_bundle_and_receipt() -> None:
@@ -148,6 +150,7 @@ def test_markdown_rows_match_receipt_fields() -> None:
         "model_version",
         "extraction_used",
         "reference_closure_complete",
+        "embedding_provenance",
     ):
         assert f"- {field}: {getattr(receipt, field)}" in rendered
     assert f"- tiers_run: {', '.join(receipt.tiers_run)}" in rendered

@@ -43,6 +43,7 @@ _RECEIPT_KEYS = {
     "reference_closure_complete",
     "recall_basis",
     "recall_limitations",
+    "embedding_provenance",
 }
 
 
@@ -78,6 +79,7 @@ def test_query_tool_returns_bundle_and_receipt() -> None:
     assert result["receipt"]["model_used"] is False
     assert result["receipt"]["extraction_used"] is False
     assert result["receipt"]["determinism_class"] == "byte_exact"
+    assert result["receipt"]["embedding_provenance"] is None
 
 
 def test_query_tool_matches_library_and_cli() -> None:
