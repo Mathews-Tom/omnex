@@ -13,12 +13,14 @@ surface drives.
 
 from __future__ import annotations
 
+import dataclasses
+import json
 from collections.abc import Iterable
 from pathlib import Path
 
 import click
 
-from omnex import KernelConfig, api
+from omnex import ContextBundle, KernelConfig, Receipt, api
 
 # Default token budget for a query when ``--budget`` is omitted. A query is a
 # budgeted retrieval, so the surface always passes a concrete budget through to
@@ -73,6 +75,54 @@ def _collect_files(paths: Iterable[Path]) -> list[Path]:
     return collected
 
 
+def _receipt_dict(receipt: Receipt) -> dict[str, object]:
+    """The receipt as a JSON-serializable mapping, with its recall caveats.
+
+    The receipt schema is unchanged: this serializes its fields verbatim and
+    appends the derived ``recall_limitations`` so the rendered audit trail
+    carries the same honesty caveats the library exposes.
+    """
+    data: dict[str, object] = dataclasses.asdict(receipt)
+    data["recall_limitations"] = list(receipt.recall_limitations)
+    return data
+
+
+def _render_json(bundle: ContextBundle, receipt: Receipt) -> str:
+    """Render the bundle and receipt as a deterministic, key-sorted JSON document."""
+    payload = {
+        "bundle": {
+            "context": bundle.render(),
+            "total_tokens": bundle.total_tokens,
+            "representations": [
+                {"unit_id": rep.unit_id, "mode": rep.mode, "token_count": rep.token_count}
+                for rep in bundle.representations
+            ],
+        },
+        "receipt": _receipt_dict(receipt),
+    }
+    return json.dumps(payload, indent=2, sort_keys=True)
+
+
+def _render_markdown(bundle: ContextBundle, receipt: Receipt) -> str:
+    """Render the bundle context followed by a human-readable receipt section."""
+    rows = [
+        f"- returned_tokens: {receipt.returned_tokens}",
+        f"- baseline_tokens: {receipt.baseline_tokens}",
+        f"- tiers_run: {', '.join(receipt.tiers_run)}",
+        f"- determinism_class: {receipt.determinism_class}",
+        f"- model_used: {receipt.model_used}",
+        f"- model_version: {receipt.model_version}",
+        f"- extraction_used: {receipt.extraction_used}",
+        f"- reference_closure_complete: {receipt.reference_closure_complete}",
+        f"- recall_basis: {receipt.recall_basis}",
+    ]
+    blocks = [bundle.render(), "## Receipt", "\n".join(rows)]
+    if receipt.recall_limitations:
+        caveats = "\n".join(f"- {item}" for item in receipt.recall_limitations)
+        blocks.append("### Recall limitations\n\n" + caveats)
+    return "\n\n".join(block for block in blocks if block)
+
+
 @click.group()
 @click.version_option(package_name="omnex")
 def main() -> None:
@@ -115,13 +165,26 @@ def index_command(paths: tuple[Path, ...]) -> None:
     show_default=True,
     help="Token budget the packed context must fit within.",
 )
-def query_command(corpus: Path, question: str, budget: int) -> None:
-    """Answer QUESTION over CORPUS under a token budget and print the context.
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["json", "markdown"]),
+    default="markdown",
+    show_default=True,
+    help="Render the ContextBundle and Receipt as JSON or Markdown.",
+)
+def query_command(corpus: Path, question: str, budget: int, output_format: str) -> None:
+    """Answer QUESTION over CORPUS under a token budget and render the result.
 
     Routes CORPUS through its adapters and runs the same T0 kernel pipeline the
-    library does, then prints the rendered ContextBundle. The retrieval, ranking,
-    and returned set are exactly the library's; the CLI only renders them.
+    library does, then renders the ContextBundle and Receipt in the chosen
+    format. The retrieval, ranking, and returned set are exactly the library's;
+    the CLI only renders them, so output is deterministic for a fixed corpus,
+    question, and budget.
     """
     sources = _collect_files([corpus])
-    bundle, _ = api.query_sources(sources, question, budget, default_config())
-    click.echo(bundle.render())
+    bundle, receipt = api.query_sources(sources, question, budget, default_config())
+    if output_format == "json":
+        click.echo(_render_json(bundle, receipt))
+    else:
+        click.echo(_render_markdown(bundle, receipt))
