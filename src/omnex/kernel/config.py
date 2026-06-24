@@ -22,6 +22,10 @@ Tier = Literal["T0", "T1", "T2", "T3"]
 # The reproducibility guarantee a tier may claim in the Receipt.
 DeterminismClass = Literal["byte_exact", "pinned_reproducible", "model_versioned"]
 
+# What a run's recall rests on: the lexical (FTS/BM25F) lane alone, or the
+# lexical lane plus the opt-in vector lane.
+RecallBasis = Literal["lexical", "lexical_plus_vector"]
+
 
 @dataclass(frozen=True, slots=True)
 class KernelConfig:

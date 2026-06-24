@@ -62,6 +62,11 @@ _SECTION_TOKEN_BUDGET = 512
 _MARKDOWN_SUFFIXES: frozenset[str] = frozenset({".md", ".markdown", ".mdown", ".mkd", ".mdwn"})
 _REST_SUFFIXES: frozenset[str] = frozenset({".rst", ".rest"})
 _PROSE_SUFFIXES: frozenset[str] = _MARKDOWN_SUFFIXES | _REST_SUFFIXES
+# Extensions whose contents are sniffed for prose structure. Only genuine
+# plain-text files (and extension-less files) are sniffed, so a source or config
+# file that merely contains a ``#`` comment or a ``----`` divider is not claimed
+# as prose -- it falls through to fail loud, as the fail-loud routing requires.
+_PLAINTEXT_SUFFIXES: frozenset[str] = frozenset({".txt", ".text"})
 
 Flavor = Literal["markdown", "rest"]
 
@@ -111,6 +116,27 @@ def _has_prose_structure(text: str) -> bool:
         if index > 0 and _REST_UNDERLINE_RE.match(line) and lines[index - 1].strip():
             return True
     return False
+
+
+def _claims_prose(source: Path) -> bool:
+    """True if ``source`` is a prose document, by extension or heading structure.
+
+    A recognized prose extension claims directly. A genuine plain-text or
+    extension-less file is sniffed for prose structure; any other extension (a
+    source or config file) is rejected so it falls through to fail-loud routing
+    rather than being mis-parsed as prose. This is the single routing predicate,
+    shared by the adapter and inter-document neighbor resolution.
+    """
+    suffix = source.suffix.lower()
+    if suffix in _PROSE_SUFFIXES:
+        return True
+    if suffix and suffix not in _PLAINTEXT_SUFFIXES:
+        return False
+    try:
+        text = source.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+    return _has_prose_structure(text)
 
 
 # ---------------------------------------------------------------------------
@@ -528,7 +554,7 @@ def _neighbor_sections(target: Path, cache: NeighborCache) -> list[Unit]:
     cached = cache.get(key)
     if cached is not None:
         return cached
-    if target.suffix.lower() not in _PROSE_SUFFIXES or not target.is_file():
+    if not target.is_file() or not _claims_prose(target):
         cache[key] = []
         return []
     document = ProseAdapter().ingest(target)
@@ -769,13 +795,7 @@ class ProseAdapter:
 
     def claims(self, source: Path) -> bool:
         """Return True for a prose source, by extension or heading structure."""
-        if source.suffix.lower() in _PROSE_SUFFIXES:
-            return True
-        try:
-            text = source.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            return False
-        return _has_prose_structure(text)
+        return _claims_prose(source)
 
     def ingest(self, source: Path) -> Document:
         """Establish document identity, content hash, and raw token count."""

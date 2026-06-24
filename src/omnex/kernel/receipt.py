@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from omnex.kernel.config import DeterminismClass
+from omnex.kernel.config import DeterminismClass, RecallBasis
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,7 +32,10 @@ class Receipt:
     is True only when a tier computed a reference closure and every unit in that
     closure was emitted in full (an exact set-membership fact, never a threshold);
     it is False on a tier that computes no closure and on an empty closure (no
-    reachable units, e.g. no lexical seeds).
+    reachable units, e.g. no lexical seeds). ``recall_basis`` records what recall
+    rested on -- the lexical lane alone, or the lexical plus vector lane -- so a
+    reader never mistakes a lexical-only run for one with semantic recall; the
+    plain-language caveats follow from it in :attr:`recall_limitations`.
     """
 
     returned_tokens: int
@@ -43,3 +46,23 @@ class Receipt:
     extraction_used: bool
     determinism_class: DeterminismClass
     reference_closure_complete: bool
+    recall_basis: RecallBasis
+
+    @property
+    def recall_limitations(self) -> tuple[str, ...]:
+        """Plain-language recall caveats implied by ``recall_basis``.
+
+        For a lexical-only run these state that recall is lexical, so a
+        semantically distant unit can be missed unless a structural edge such as
+        CROSS_REF reaches it, and that lexical recall trails embedding-based
+        retrieval where query and content vocabulary diverge. An empty tuple means
+        no recall caveat applies (the vector lane contributed semantic recall).
+        """
+        if self.recall_basis == "lexical":
+            return (
+                "Recall is lexical-only: a semantically distant unit can be missed "
+                "unless a structural edge such as CROSS_REF reaches it.",
+                "Lexical recall trails embedding-based retrieval where query and "
+                "content vocabulary diverge; this run makes no claim to beat embeddings.",
+            )
+        return ()
