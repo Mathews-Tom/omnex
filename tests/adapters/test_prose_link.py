@@ -148,6 +148,40 @@ def test_link_to_unindexed_neighbor_emits_no_edge(tmp_path: Path) -> None:
     assert not any(ref.kind == "CROSS_REF" for ref in refs)
 
 
+def test_reference_style_links_cite_intra_and_inter(tmp_path: Path) -> None:
+    neighbor = (tmp_path / "ref.md").resolve()
+    neighbor.write_text("# Reference page\n\nDetails.\n", encoding="utf-8")
+    main = (tmp_path / "main.md").resolve()
+    main.write_text(
+        "# Guide\n\n"
+        "Follow the [style guide][style], the collapsed [Style][], "
+        "and the [Reference page][ref].\n\n"
+        "## Style\n\nText.\n\n"
+        "[style]: #style\n"
+        "[ref]: ref.md\n",
+        encoding="utf-8",
+    )
+    adapter = ProseAdapter()
+    main_doc = adapter.ingest(main)
+    main_units = adapter.parse(main_doc)
+    neighbor_doc = adapter.ingest(neighbor)
+    neighbor_units = adapter.parse(neighbor_doc)
+    refs = adapter.link(main_doc, main_units)
+    cites = [ref for ref in refs if ref.kind == "CITES"]
+    assert cites, "reference-style links must cite their targets"
+    assert all(ref.confidence == 0.7 for ref in cites)
+    targets = {ref.target_id for ref in cites}
+    style = next(u for u in main_units if u.kind == "SECTION" and u.title == "Style")
+    reference = next(
+        u for u in neighbor_units if u.kind == "SECTION" and u.title == "Reference page"
+    )
+    # The full and collapsed forms both resolve [style] -> the Style section,
+    # and the inter-document [ref]: ref.md resolves to the neighbor's root.
+    assert style.id in targets
+    assert reference.id in targets
+    build_graph(main_units + neighbor_units, refs)
+
+
 def test_rest_links_recover_crossref_and_cites(tmp_path: Path) -> None:
     source = tmp_path / "d.rst"
     source.write_text(

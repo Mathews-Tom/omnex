@@ -489,6 +489,10 @@ _REST_SIMPLE_REF_RE = re.compile(r"(?<![\w`])([A-Za-z][\w.\-]*)_(?![\w_])")
 _CROSSREF_INTRA_CONF = 1.0
 _CROSSREF_INTER_CONF = 0.9
 
+# Within one link() call, neighbor documents are parsed once and reused: maps a
+# resolved neighbor path to its SECTION units (empty when missing or non-prose).
+NeighborCache = dict[str, list[Unit]]
+
 
 def _slug(title: str) -> str:
     """GitHub-style heading slug: lowercase, drop punctuation, spaces to hyphens."""
@@ -514,7 +518,26 @@ def _section_titles(nodes: Sequence[_Node]) -> dict[str, str]:
     return titles
 
 
-def _neighbor_section_id(base_uri: str, dest: str) -> str | None:
+def _neighbor_sections(target: Path, cache: NeighborCache) -> list[Unit]:
+    """Return the neighbor's SECTION units, parsing it at most once per link call.
+
+    A missing or non-prose target caches and returns an empty list, so repeated
+    links to the same neighbor neither re-read nor re-parse it within one call.
+    """
+    key = str(target)
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+    if target.suffix.lower() not in _PROSE_SUFFIXES or not target.is_file():
+        cache[key] = []
+        return []
+    document = ProseAdapter().ingest(target)
+    sections = [unit for unit in ProseAdapter().parse(document) if unit.kind == "SECTION"]
+    cache[key] = sections
+    return sections
+
+
+def _neighbor_section_id(base_uri: str, dest: str, cache: NeighborCache) -> str | None:
     """Resolve an inter-document link to a neighbor section's unit id, or None.
 
     The link path is resolved relative to the source document; the neighbor is
@@ -527,11 +550,7 @@ def _neighbor_section_id(base_uri: str, dest: str) -> str | None:
     path_part, _, anchor = dest.partition("#")
     if not path_part:
         return None
-    target = (Path(base_uri).parent / path_part).resolve()
-    if target.suffix.lower() not in _PROSE_SUFFIXES or not target.is_file():
-        return None
-    document = ProseAdapter().ingest(target)
-    sections = [unit for unit in ProseAdapter().parse(document) if unit.kind == "SECTION"]
+    sections = _neighbor_sections((Path(base_uri).parent / path_part).resolve(), cache)
     if not sections:
         return None
     if anchor:
@@ -540,18 +559,22 @@ def _neighbor_section_id(base_uri: str, dest: str) -> str | None:
     return sections[0].id
 
 
-def _resolve_anchor(base_uri: str, dest: str, slugs: dict[str, str]) -> tuple[str, float] | None:
+def _resolve_anchor(
+    base_uri: str, dest: str, slugs: dict[str, str], cache: NeighborCache
+) -> tuple[str, float] | None:
     """Resolve a Markdown link dest to a (unit id, confidence), or None."""
     if dest.startswith("#"):
         target = slugs.get(dest[1:].strip().lower())
         return (target, _CROSSREF_INTRA_CONF) if target is not None else None
     if _SCHEME_RE.match(dest) or dest.startswith("//"):
         return None
-    target = _neighbor_section_id(base_uri, dest)
+    target = _neighbor_section_id(base_uri, dest, cache)
     return (target, _CROSSREF_INTER_CONF) if target is not None else None
 
 
-def _markdown_crossref_edges(document: Document, nodes: Sequence[_Node]) -> list[Reference]:
+def _markdown_crossref_edges(
+    document: Document, nodes: Sequence[_Node], cache: NeighborCache
+) -> list[Reference]:
     """Recover CROSS_REF edges from Markdown inline anchor and document links."""
     slugs = _section_slugs(nodes)
     edges: list[Reference] = []
@@ -559,7 +582,7 @@ def _markdown_crossref_edges(document: Document, nodes: Sequence[_Node]) -> list
         if node.unit.protect:
             continue
         for dest in _INLINE_LINK_RE.findall(node.unit.text):
-            resolved = _resolve_anchor(document.uri, dest, slugs)
+            resolved = _resolve_anchor(document.uri, dest, slugs, cache)
             if resolved is not None and resolved[0] != node.unit.id:
                 edges.append(
                     Reference(node.unit.id, resolved[0], "CROSS_REF", resolved[1], (dest,))
@@ -585,11 +608,13 @@ def _rest_crossref_edges(nodes: Sequence[_Node]) -> list[Reference]:
     return edges
 
 
-def _crossref_edges(document: Document, nodes: Sequence[_Node], flavor: Flavor) -> list[Reference]:
+def _crossref_edges(
+    document: Document, nodes: Sequence[_Node], flavor: Flavor, cache: NeighborCache
+) -> list[Reference]:
     """Recover CROSS_REF edges for the document's flavor."""
     if flavor == "rest":
         return _rest_crossref_edges(nodes)
-    return _markdown_crossref_edges(document, nodes)
+    return _markdown_crossref_edges(document, nodes, cache)
 
 
 # Footnote reference [^id] and its definition line [^id]: ...
@@ -629,7 +654,9 @@ def _reflink_defs(nodes: Sequence[_Node]) -> dict[str, str]:
     return defs
 
 
-def _markdown_cites_edges(document: Document, nodes: Sequence[_Node]) -> list[Reference]:
+def _markdown_cites_edges(
+    document: Document, nodes: Sequence[_Node], cache: NeighborCache
+) -> list[Reference]:
     """Recover CITES edges from Markdown footnotes and reference-style links."""
     footnotes = _footnote_defs(nodes)
     reflinks = _reflink_defs(nodes)
@@ -640,8 +667,13 @@ def _markdown_cites_edges(document: Document, nodes: Sequence[_Node]) -> list[Re
             continue
         text = node.unit.text
         for match in _FOOTNOTE_REF_RE.finditer(text):
-            if text[match.end() : match.end() + 1] == ":":
-                continue  # the definition's own marker, not a reference
+            line_start = text.rfind("\n", 0, match.start()) + 1
+            is_definition = (
+                text[line_start : match.start()].strip() == ""
+                and text[match.end() : match.end() + 1] == ":"
+            )
+            if is_definition:
+                continue  # a line-anchored [^id]: is the definition's own marker
             target = footnotes.get(match.group(1))
             if target is not None and target != node.unit.id:
                 edges.append(
@@ -658,7 +690,7 @@ def _markdown_cites_edges(document: Document, nodes: Sequence[_Node]) -> list[Re
             dest = reflinks.get(label)
             if dest is None:
                 continue
-            resolved = _resolve_anchor(document.uri, dest, slugs)
+            resolved = _resolve_anchor(document.uri, dest, slugs, cache)
             if resolved is not None and resolved[0] != node.unit.id:
                 edges.append(
                     Reference(
@@ -695,11 +727,13 @@ def _rest_cites_edges(nodes: Sequence[_Node]) -> list[Reference]:
     return edges
 
 
-def _cites_edges(document: Document, nodes: Sequence[_Node], flavor: Flavor) -> list[Reference]:
+def _cites_edges(
+    document: Document, nodes: Sequence[_Node], flavor: Flavor, cache: NeighborCache
+) -> list[Reference]:
     """Recover CITES edges for the document's flavor."""
     if flavor == "rest":
         return _rest_cites_edges(nodes)
-    return _markdown_cites_edges(document, nodes)
+    return _markdown_cites_edges(document, nodes, cache)
 
 
 def _dedup_sort(refs: Sequence[Reference]) -> list[Reference]:
@@ -785,9 +819,10 @@ class ProseAdapter:
         nodes = _build_nodes(document, source, _blocks(source, flavor))
         if {node.unit.id for node in nodes} != {unit.id for unit in units}:
             raise ValueError("link received units that do not match the parsed source")
+        cache: NeighborCache = {}
         edges = _structural_edges(nodes)
-        edges += _crossref_edges(document, nodes, flavor)
-        edges += _cites_edges(document, nodes, flavor)
+        edges += _crossref_edges(document, nodes, flavor, cache)
+        edges += _cites_edges(document, nodes, flavor, cache)
         return _dedup_sort(edges)
 
     def capabilities(self) -> AdapterCapabilities:
