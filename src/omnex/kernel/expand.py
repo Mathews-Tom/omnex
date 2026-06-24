@@ -8,17 +8,18 @@ primitive ``StructureGraph.traverse``; the allowed edge kinds are exactly the
 keys of ``hop_budget_by_kind``, so callers configure expansion with a single
 budget mapping.
 
-This is deliberately *bounded*, not transitive: the deterministic T1 reference
-closure is a separate, later seam. The result is whatever ``traverse`` returns —
-complete under the budgets, deduplicated by id, and in deterministic order — so
-the same seeds, graph, budgets, and decay always yield byte-identical output.
+``graph_expand`` is deliberately *bounded*, not transitive. ``closure_expand`` is
+the deterministic T1 reference closure: the unbounded transitive closure over a
+chosen set of reference edge kinds, terminating on cycles. Both return whatever
+``traverse`` gives — complete, deduplicated by id, and in deterministic order —
+so the same inputs always yield byte-identical output.
 
 No model load, network, or file-system access.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 
 from omnex.ir.graph import Hop, StructureGraph
 
@@ -55,5 +56,42 @@ def graph_expand(
         seed_ids,
         kinds=None,
         hop_budget=hop_budget_by_kind,
+        confidence_decay=confidence_decay,
+    )
+
+
+def closure_expand(
+    seed_ids: Sequence[str],
+    graph: StructureGraph,
+    ref_kinds: Iterable[str],
+    confidence_decay: float = 1.0,
+) -> list[Hop]:
+    """Compute the deterministic transitive closure over reference edges.
+
+    Starting from ``seed_ids``, follow every edge whose kind is in ``ref_kinds``
+    (the hard reference edges: REFERENCES, FOREIGN_KEY, IMPORTS, CALLS) to a
+    fixpoint, returning every reachable unit deduplicated by id. Unlike
+    ``graph_expand`` this is *unbounded*: it is expressed as a per-kind hop budget
+    equal to the node count, which is at least the longest simple path, so the
+    result is the complete transitive closure. Cycles terminate via the
+    traversal's per-node domination and emitted-set guards.
+
+    Seeds are returned at depth 0 with confidence 1.0; reached units carry their
+    closure depth and decayed confidence. ``confidence_decay`` must lie in
+    ``(0.0, 1.0]``; a bare ``str`` for ``seed_ids`` raises ``TypeError``; a seed
+    absent from ``graph`` raises ``KeyError``. The output is byte-identical for
+    identical inputs.
+    """
+    if isinstance(seed_ids, str):
+        raise TypeError(f"seed_ids must be a sequence of ids, not a single str: {seed_ids!r}")
+    if not 0.0 < confidence_decay <= 1.0:
+        raise ValueError(f"confidence_decay must be in (0.0, 1.0], got {confidence_decay}")
+    kinds = frozenset(ref_kinds)
+    budget = max(len(graph), 1)
+    hop_budget = dict.fromkeys(kinds, budget)
+    return graph.traverse(
+        seed_ids,
+        kinds=kinds,
+        hop_budget=hop_budget,
         confidence_decay=confidence_decay,
     )
