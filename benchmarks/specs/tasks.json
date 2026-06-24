@@ -1,0 +1,45 @@
+{
+  "family": "specs",
+  "corpus": "commerce_api.json",
+  "recall_target": 1.0,
+  "tasks": [
+    {
+      "id": "create_payment",
+      "query": "create payment",
+      "gold": [
+        {"label": "POST /payments", "marker": "Creating a payment: submit the charge request"},
+        {"label": "PaymentRequest", "marker": "Inbound charge details."},
+        {"label": "Payment", "marker": "Stored charge record."},
+        {"label": "Money", "marker": "A monetary value."},
+        {"label": "Customer", "marker": "A buyer."},
+        {"label": "Address", "marker": "A postal location."}
+      ]
+    },
+    {
+      "id": "dispatch_shipment",
+      "query": "dispatch shipment parcel",
+      "gold": [
+        {"label": "POST /shipments", "marker": "Dispatching a shipment: hand a parcel"},
+        {"label": "ShipmentRequest", "marker": "Outbound parcel details."},
+        {"label": "Shipment", "marker": "A dispatched parcel manifest."},
+        {"label": "Package", "marker": "A physical parcel."},
+        {"label": "Dimensions", "marker": "Bounding measurements."},
+        {"label": "Weight", "marker": "A mass measurement."},
+        {"label": "Address", "marker": "A postal location."},
+        {"label": "Carrier", "marker": "A delivery company."}
+      ]
+    },
+    {
+      "id": "enroll_subscriber",
+      "query": "enroll subscriber recurring plan",
+      "gold": [
+        {"label": "POST /subscriptions", "marker": "Enrolling a subscriber: begin a recurring plan"},
+        {"label": "SubscriptionRequest", "marker": "Enrollment details."},
+        {"label": "Subscription", "marker": "A recurring plan enrollment."},
+        {"label": "Money", "marker": "A monetary value."},
+        {"label": "Customer", "marker": "A buyer."},
+        {"label": "Address", "marker": "A postal location."}
+      ]
+    }
+  ]
+}

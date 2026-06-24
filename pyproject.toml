@@ -35,6 +35,7 @@ bench = ["omnex[embed]"]
 [project.scripts]
 omnex = "omnex.cli:main"
 omnex-mcp = "omnex.mcp:main"
+omnex-bench = "omnex.bench.runner:main"
 
 [project.urls]
 Homepage = "https://github.com/Mathews-Tom/omnex"
