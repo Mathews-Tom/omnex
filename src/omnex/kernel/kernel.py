@@ -60,8 +60,13 @@ _VECTOR_CANDIDATE_LIMIT = 200
 
 
 def _tiers_run(tier: Tier) -> tuple[str, ...]:
-    """Tiers exercised by a run: the T0 floor always runs; T1 adds the closure."""
-    return ("T0", "T1") if tier == "T1" else (tier,)
+    """Tiers exercised by a run: the T0 floor always runs; T1 adds the closure and
+    T2 the vector lane, both fused on top of that floor."""
+    if tier == "T1":
+        return ("T0", "T1")
+    if tier == "T2":
+        return ("T0", "T2")
+    return (tier,)
 
 
 def _max_normalized(scored: Sequence[tuple[str, float]]) -> dict[str, float]:

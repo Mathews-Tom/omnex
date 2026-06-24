@@ -88,6 +88,9 @@ def test_t2_fuses_lexical_and_vector_candidates() -> None:
     assert "TLS secrets" in rendered  # the lexical lane still contributes
     assert receipt.recall_basis == "lexical_plus_vector"
     assert receipt.model_used is True
+    # The lexical T0 floor always runs and is fused with the vector lane, so the
+    # receipt reports both tiers, not T2 alone.
+    assert receipt.tiers_run == ("T0", "T2")
 
 
 def test_vector_index_ranks_by_similarity() -> None:
