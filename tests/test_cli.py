@@ -150,6 +150,7 @@ def test_markdown_rows_match_receipt_fields() -> None:
         "model_version",
         "extraction_used",
         "reference_closure_complete",
+        "embedding_provenance",
     ):
         assert f"- {field}: {getattr(receipt, field)}" in rendered
     assert f"- tiers_run: {', '.join(receipt.tiers_run)}" in rendered
