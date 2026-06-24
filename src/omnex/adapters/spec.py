@@ -32,6 +32,7 @@ from omnex.adapters.base import AdapterCapabilities
 from omnex.ir.types import (
     Document,
     Reference,
+    ReferenceKind,
     Span,
     Unit,
     UnitKind,
@@ -392,6 +393,102 @@ def _collect_root_schema(root: _JsonNode, source: str, units: list[_UnitNode]) -
     _collect_fields(root, [], source, units)
 
 
+def _collect_unit_nodes(root: _JsonNode, source: str, flavor: str) -> list[_UnitNode]:
+    """Collect the OPERATION/SCHEMA/FIELD unit nodes of a parsed spec.
+
+    Shared by ``parse`` (to build units) and ``link`` (to know which pointers are
+    emitted units), so the two never disagree about what a unit is.
+    """
+    nodes: list[_UnitNode] = []
+    if flavor == "openapi":
+        paths = root.get("paths")
+        if paths is not None and paths.is_object:
+            _collect_operations(paths, source, nodes)
+        components = root.get("components")
+        schemas = components.get("schemas") if components is not None else None
+        if schemas is not None and schemas.is_object:
+            _collect_schemas(schemas, ["components", "schemas"], source, nodes)
+    else:
+        for defs_key in ("$defs", "definitions"):
+            defs = root.get(defs_key)
+            if defs is not None and defs.is_object:
+                _collect_schemas(defs, [defs_key], source, nodes)
+        _collect_root_schema(root, source, nodes)
+    return nodes
+
+
+@dataclass(frozen=True, slots=True)
+class _RefSite:
+    """One ``$ref`` occurrence: its pointer, target string, and owning property."""
+
+    ref_pointer: str
+    target: str
+    property_name: str | None
+
+
+def _resolve_target(reference: str) -> str | None:
+    """Return the local JSON pointer a ``$ref`` addresses, or None if external.
+
+    Only internal ``#/...`` references resolve to a local unit; an external
+    reference (a file or URL) is out of scope and yields no local edge.
+    """
+    if not reference.startswith("#"):
+        return None
+    return reference[1:]
+
+
+def _is_foreign_key(property_name: str) -> bool:
+    """True for a conventional foreign-key property name (``*_id`` / ``*Id``)."""
+    return property_name.endswith("_id") or property_name.endswith("Id")
+
+
+def _nearest_emitted(ref_pointer: str, emitted: frozenset[str]) -> str | None:
+    """Return the longest emitted unit pointer that encloses ``ref_pointer``.
+
+    The reference is attributed to its nearest enclosing emitted unit, so a
+    ``$ref`` inside an operation is an operation edge, and a bare reference
+    property is attributed to its schema rather than a (non-emitted) field.
+    """
+    parts = ref_pointer.split("/")
+    best: str | None = None
+    best_depth = -1
+    for pointer in emitted:
+        candidate = pointer.split("/")
+        depth = len(candidate)
+        if depth < len(parts) and parts[:depth] == candidate and depth > best_depth:
+            best = pointer
+            best_depth = depth
+    return best
+
+
+def _collect_refs(root: _JsonNode, source: str) -> list[_RefSite]:
+    """Collect every ``$ref`` occurrence with its pointer and owning property."""
+    sites: list[_RefSite] = []
+    _walk_refs(root, [], source, sites)
+    return sites
+
+
+def _walk_refs(node: _JsonNode, segments: list[str], source: str, sites: list[_RefSite]) -> None:
+    if node.members is not None:
+        ref = node.get("$ref")
+        if ref is not None and ref.members is None and ref.elements is None:
+            raw = source[ref.start : ref.end]
+            if raw.startswith('"'):
+                target = json.loads(raw)
+                if isinstance(target, str):
+                    property_name = (
+                        segments[-1]
+                        if len(segments) >= 2 and segments[-2] == "properties"
+                        else None
+                    )
+                    sites.append(_RefSite(_pointer([*segments, "$ref"]), target, property_name))
+        for key, child in node.members:
+            _walk_refs(child, [*segments, key], source, sites)
+    elif node.elements is not None:
+        for index, child in enumerate(node.elements):
+            _walk_refs(child, [*segments, str(index)], source, sites)
+
+
 class SpecAdapter:
     """Deterministic OpenAPI / JSON-Schema adapter emitting the IR."""
 
@@ -438,32 +535,63 @@ class SpecAdapter:
         if flavor is None:
             raise ValueError(f"source is not a supported spec: {document.uri}")
 
-        nodes: list[_UnitNode] = []
-        if flavor == "openapi":
-            paths = root.get("paths")
-            if paths is not None and paths.is_object:
-                _collect_operations(paths, source, nodes)
-            components = root.get("components")
-            schemas = components.get("schemas") if components is not None else None
-            if schemas is not None and schemas.is_object:
-                _collect_schemas(schemas, ["components", "schemas"], source, nodes)
-        else:
-            for defs_key in ("$defs", "definitions"):
-                defs = root.get(defs_key)
-                if defs is not None and defs.is_object:
-                    _collect_schemas(defs, [defs_key], source, nodes)
-            _collect_root_schema(root, source, nodes)
+        nodes = _collect_unit_nodes(root, source, flavor)
         return [self._build_unit(document, source, node) for node in nodes]
 
     def link(self, document: Document, units: Sequence[Unit]) -> list[Reference]:
-        """Recover ``$ref`` edges among ``units``."""
-        raise NotImplementedError("spec $ref linking lands in the spec-adapter-link change")
+        """Recover ``$ref`` edges among ``units`` as typed Reference values.
+
+        Each internal ``$ref`` becomes one edge from its nearest enclosing
+        emitted unit to the referenced unit, with ``confidence = 1.0`` and the
+        ``$ref`` JSON pointer as evidence. A reference property named like a
+        foreign key (``*_id`` / ``*Id``) is classified ``FOREIGN_KEY``; every
+        other reference is ``REFERENCES``. External references are skipped;
+        dangling internal references fail loud. Self-references are handled by
+        the cyclic-reference commit.
+        """
+        source = _read_source(document)
+        root = _SpanParser(source).parse()
+        flavor = _flavor_node(root)
+        if flavor is None:
+            raise ValueError(f"source is not a supported spec: {document.uri}")
+        nodes = _collect_unit_nodes(root, source, flavor)
+        if {_unit_id(document.id, node.pointer) for node in nodes} != {unit.id for unit in units}:
+            raise ValueError("link received units that do not match the parsed source")
+        emitted = frozenset(node.pointer for node in nodes)
+        references: list[Reference] = []
+        for site in _collect_refs(root, source):
+            target_pointer = _resolve_target(site.target)
+            if target_pointer is None:
+                continue
+            if target_pointer not in emitted:
+                raise ValueError(f"dangling internal reference: {site.target}")
+            source_pointer = _nearest_emitted(site.ref_pointer, emitted)
+            if source_pointer is None:
+                raise ValueError(f"reference outside any unit: {site.ref_pointer}")
+            if source_pointer == target_pointer:
+                continue
+            kind: ReferenceKind = (
+                "FOREIGN_KEY"
+                if site.property_name is not None and _is_foreign_key(site.property_name)
+                else "REFERENCES"
+            )
+            references.append(
+                Reference(
+                    source_id=_unit_id(document.id, source_pointer),
+                    target_id=_unit_id(document.id, target_pointer),
+                    kind=kind,
+                    confidence=1.0,
+                    evidence=(site.ref_pointer,),
+                )
+            )
+        references.sort(key=lambda ref: (ref.source_id, ref.target_id, ref.kind, ref.evidence))
+        return references
 
     def capabilities(self) -> AdapterCapabilities:
         """Report emittable kinds, determinism, and model-extraction opt-in."""
         return AdapterCapabilities(
             unit_kinds=frozenset({"OPERATION", "SCHEMA", "FIELD"}),
-            reference_kinds=frozenset(),
+            reference_kinds=frozenset({"REFERENCES", "FOREIGN_KEY"}),
             deterministic_parse=True,
             model_extraction_opt_in=False,
         )

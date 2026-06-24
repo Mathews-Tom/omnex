@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "OrderBook",
+  "$defs": {
+    "Order": {
+      "type": "object",
+      "description": "A placed order.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "owner_id": {
+          "$ref": "#/$defs/Owner"
+        },
+        "status": {
+          "$ref": "#/$defs/Owner/properties/name"
+        }
+      }
+    },
+    "Owner": {
+      "type": "object",
+      "description": "An account owner.",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "manager": {
+          "$ref": "#/$defs/Owner"
+        }
+      }
+    }
+  }
+}
