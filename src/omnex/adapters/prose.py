@@ -28,6 +28,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
+from omnex.adapters._split import split_on_budget
 from omnex.adapters.base import AdapterCapabilities
 from omnex.ir.types import (
     Document,
@@ -46,9 +47,15 @@ from omnex.kernel.packer import count_tokens
 if TYPE_CHECKING:
     import tiktoken
 
-# Identifier of the deterministic offline tiktoken encoding used for raw counts.
-# This is a tokenizer, not a model lane.
+# Identifier of the deterministic offline tiktoken encoding used for raw counts
+# and token-aware splitting. This is a tokenizer, not a model lane.
 _ENCODING = "cl100k_base"
+
+# Token budget a single section-body unit may reach before it is split on natural
+# boundaries. A unit is the packing atom, so an over-budget body is divided into
+# several units rather than packed whole.
+_SECTION_TOKEN_BUDGET = 512
+
 # Recognized prose file extensions (lowercased).
 _MARKDOWN_SUFFIXES: frozenset[str] = frozenset({".md", ".markdown", ".mdown", ".mkd", ".mdwn"})
 _REST_SUFFIXES: frozenset[str] = frozenset({".rst", ".rest"})
@@ -351,6 +358,7 @@ def _assemble(document: Document, source: str, blocks: Sequence[_Block]) -> list
     """Build the heading tree from ``blocks`` into breadcrumb-stamped units."""
     units: list[Unit] = []
     stack: list[tuple[int, str]] = []
+    encode = _encoder().encode
     for block in blocks:
         if block.kind == "HEADING":
             while stack and stack[-1][0] >= block.level:
@@ -372,11 +380,27 @@ def _assemble(document: Document, source: str, blocks: Sequence[_Block]) -> list
             continue
         unit_kind, protect = _BLOCK_UNIT[block.kind]
         breadcrumb = tuple(title for _, title in stack)
-        units.append(
-            _build_unit(
-                document, source, unit_kind, block.start, block.end, None, breadcrumb, protect
+        text = source[block.start : block.end]
+        if not protect and len(encode(text)) > _SECTION_TOKEN_BUDGET:
+            for piece_start, piece_end in split_on_budget(text, _SECTION_TOKEN_BUDGET, encode):
+                units.append(
+                    _build_unit(
+                        document,
+                        source,
+                        unit_kind,
+                        block.start + piece_start,
+                        block.start + piece_end,
+                        None,
+                        breadcrumb,
+                        protect,
+                    )
+                )
+        else:
+            units.append(
+                _build_unit(
+                    document, source, unit_kind, block.start, block.end, None, breadcrumb, protect
+                )
             )
-        )
     return units
 
 
