@@ -386,7 +386,6 @@ Testing follows the same architecture boundaries as the runtime.
 - **Kernel tests:** FTS retrieval behavior, hop-budget enforcement, confidence decay behavior, deterministic spec closure, and packer budget adherence.
 - **Packer tests:** `protect=True` blocks compression and elision; `COMPRESS` in T0 and T1 is deterministic and invokes no model.
 - **Benchmark discipline:** the headline comparison is against a pinned strong chunk-and-embed baseline with pre-registered labels and labeling procedure, per the brief risk mitigation.
-- **Independence contract test:** CI asserts no `archex` import and no copied archex source.
 
 ## 13. Tech stack
 
@@ -395,4 +394,3 @@ Testing follows the same architecture boundaries as the runtime.
 - Native-backed hot paths: `tiktoken` (token counting), SQLite **FTS5** (full-text), `fastembed` (T2 embeddings, optional extra, Rust/ONNX), `networkx` (graph), tree-sitter (later code adapter).
 - Surfaces: library + `click` CLI + MCP server (tri-surface).
 - Performance escape hatch: profile-driven Rust PyO3/maturin only for a proven hot loop.
-- Independence: CI dependency-contract test asserts no `archex` import and no copied archex source.
