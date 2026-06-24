@@ -78,6 +78,21 @@ SPEC_OMNEX_CONFIG = KernelConfig(
     enable_rerank=False,
 )
 
+# The pinned omnex configuration the prose family is measured under: the T0
+# deterministic floor with a tight token budget. There is no reference closure in
+# prose, so omnex runs at a fixed floor budget rather than a closure-complete one.
+# Recorded in the artifact. Not a product default.
+OMNEX_T0 = "omnex_t0"
+PROSE_BUDGET = 200
+PROSE_OMNEX_CONFIG = KernelConfig(
+    tier="T0",
+    bm25_profile={"text": 1.0, "title": 2.0, "breadcrumb": 1.5, "summary": 1.0},
+    hop_budget_by_kind={"CONTAINS": 1, "SIBLING": 0, "CROSS_REF": 1},
+    confidence_decay=0.9,
+    enable_vector_lane=False,
+    enable_rerank=False,
+)
+
 # Known benchmark families and the task file each loads from.
 _FAMILY_TASKS: Mapping[str, Path] = {
     "specs": Path("benchmarks/specs/tasks.json"),
@@ -323,6 +338,117 @@ def _build_artifact(
     }
 
 
+@dataclass(frozen=True, slots=True)
+class ProseTaskOutcome:
+    """A prose task's T0-vs-full-dump standing at omnex's achieved recall."""
+
+    id: str
+    query: str
+    gold_label_count: int
+    equal_recall: float
+    omnex: PathOutcome
+    full_dump: PathOutcome
+    recall_basis: str
+    recall_limitations: tuple[str, ...]
+
+
+def run_prose_family(family: Family) -> dict[str, Any]:
+    """Run the prose family: omnex T0 against the full-dump upper bound.
+
+    omnex T0 runs at a fixed floor budget (there is no closure to size against).
+    The token comparison is held at the recall omnex T0 actually achieves: the
+    full dump trivially reaches that recall too, so comparing both at it never
+    reads a delta at unequal recall. T0's achieved recall is reported as-is -- on a
+    query whose answer is semantically distant it is below 1.0, and the artifact
+    says so rather than implying T0 reaches embedding-grade recall.
+    """
+    sources = sorted(family.corpus.glob("*.md"))
+    if not sources:
+        raise RuntimeError(f"no prose documents found under {family.corpus}")
+    corpus_text = "\n".join(source.read_text() for source in sources)
+    full_dump_tokens = count_tokens(corpus_text)
+    universe = frozenset[str]().union(*(task.markers for task in family.tasks))
+
+    outcomes: list[ProseTaskOutcome] = []
+    latencies: list[float] = []
+    for task in family.tasks:
+        start = time.perf_counter()
+        bundle, receipt = omnex.query_sources(sources, task.query, PROSE_BUDGET, PROSE_OMNEX_CONFIG)
+        latencies.append(time.perf_counter() - start)
+        passages = _omnex_passages(bundle)
+        achieved = recall(covered_labels("\n".join(passages), task.markers), task.markers)
+        outcomes.append(
+            ProseTaskOutcome(
+                id=task.id,
+                query=task.query,
+                gold_label_count=len(task.markers),
+                equal_recall=achieved,
+                omnex=_grade(passages, task, universe, achieved),
+                full_dump=_grade(full_dump_baseline([corpus_text]), task, universe, achieved),
+                recall_basis=receipt.recall_basis,
+                recall_limitations=receipt.recall_limitations,
+            )
+        )
+    return _build_prose_artifact(family, full_dump_tokens, len(sources), outcomes, latencies)
+
+
+def _build_prose_artifact(
+    family: Family,
+    full_dump_tokens: int,
+    document_count: int,
+    outcomes: Sequence[ProseTaskOutcome],
+    latencies: Sequence[float],
+) -> dict[str, Any]:
+    tasks_json: list[dict[str, Any]] = []
+    for outcome in outcomes:
+        omnex_tokens = outcome.omnex.tokens_at_recall
+        full_dump_tokens_at_recall = outcome.full_dump.tokens_at_recall
+        below = (
+            omnex_tokens is not None
+            and full_dump_tokens_at_recall is not None
+            and omnex_tokens <= full_dump_tokens_at_recall
+        )
+        tasks_json.append(
+            {
+                "id": outcome.id,
+                "query": outcome.query,
+                "gold_label_count": outcome.gold_label_count,
+                "equal_recall": outcome.equal_recall,
+                "tokens_at_equal_recall": {
+                    OMNEX_T0: omnex_tokens,
+                    FULL_DUMP: full_dump_tokens_at_recall,
+                },
+                "recall": {OMNEX_T0: outcome.omnex.recall, FULL_DUMP: outcome.full_dump.recall},
+                "omnex_below_full_dump_at_equal_recall": below,
+                "recall_basis": outcome.recall_basis,
+            }
+        )
+    return {
+        "family": family.name,
+        "generated_by": "omnex-bench",
+        "tier": PROSE_OMNEX_CONFIG.tier,
+        "token_ledger": "whitespace word count (omnex.kernel.packer.count_tokens)",
+        "corpus": {
+            "directory": family.corpus.name,
+            "documents": document_count,
+            "full_dump_tokens": full_dump_tokens,
+        },
+        "omnex": {
+            "tier": PROSE_OMNEX_CONFIG.tier,
+            "budget": PROSE_BUDGET,
+            "bm25_profile": dict(PROSE_OMNEX_CONFIG.bm25_profile),
+            "hop_budget_by_kind": dict(PROSE_OMNEX_CONFIG.hop_budget_by_kind),
+            "confidence_decay": PROSE_OMNEX_CONFIG.confidence_decay,
+        },
+        "upper_bound_baseline": {"name": FULL_DUMP, "role": "demoted_upper_bound"},
+        "tasks": tasks_json,
+        "latency": {
+            "omnex_p95_seconds": p95_latency(latencies),
+            "note": "environment-dependent; excluded from the determinism guarantee",
+        },
+    }
+
+
 def write_artifact(artifact: dict[str, Any], out_dir: Path) -> Path:
     """Write ``artifact`` to ``out_dir/<family>.json`` deterministically; return the path.
 
@@ -357,8 +483,24 @@ def main() -> None:
 @click.option("--out", default="benchmarks/results", help="output directory for the artifact")
 @click.option("--embedder", default="bge-small", type=click.Choice(["bge-small", "tfidf"]))
 def run(family: str, out: str, embedder: str) -> None:
-    """Run a benchmark family and write its artifact."""
+    """Run a benchmark family and write its artifact.
+
+    The spec family compares omnex T1 against the chunk-and-embed headline (the
+    ``--embedder`` choice); the prose family compares omnex T0 against the
+    full-dump upper bound at omnex's achieved recall and ignores ``--embedder``.
+    """
     loaded = load_family(_resolve_tasks(family))
+    if loaded.name == "prose":
+        artifact = run_prose_family(loaded)
+        path = write_artifact(artifact, Path(out))
+        for task in artifact["tasks"]:
+            tokens = task["tokens_at_equal_recall"]
+            click.echo(
+                f"{task['id']} @ recall={task['equal_recall']:.2f}: "
+                f"omnex T0 {tokens[OMNEX_T0]} <= full-dump {tokens[FULL_DUMP]} tokens"
+            )
+        click.echo(f"\nartifact: {path}")
+        return
     artifact = run_family(loaded, embedder)
     path = write_artifact(artifact, Path(out))
     comparisons = [
