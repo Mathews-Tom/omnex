@@ -28,7 +28,8 @@ class Receipt:
     the reproducibility guarantee this run may claim. ``reference_closure_complete``
     is True only when a tier computed a reference closure and every unit in that
     closure was emitted in full (an exact set-membership fact, never a threshold);
-    it is False on tiers that compute no closure.
+    it is False on a tier that computes no closure and on an empty closure (no
+    reachable units, e.g. no lexical seeds).
     """
 
     returned_tokens: int

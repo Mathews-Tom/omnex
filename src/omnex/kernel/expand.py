@@ -19,6 +19,7 @@ No model load, network, or file-system access.
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Iterable, Mapping, Sequence
 
 from omnex.ir.graph import Hop, StructureGraph
@@ -70,28 +71,45 @@ def closure_expand(
 
     Starting from ``seed_ids``, follow every edge whose kind is in ``ref_kinds``
     (the hard reference edges: REFERENCES, FOREIGN_KEY, IMPORTS, CALLS) to a
-    fixpoint, returning every reachable unit deduplicated by id. Unlike
-    ``graph_expand`` this is *unbounded*: it is expressed as a per-kind hop budget
-    equal to the node count, which is at least the longest simple path, so the
-    result is the complete transitive closure. Cycles terminate via the
-    traversal's per-node domination and emitted-set guards.
+    fixpoint, returning every reachable unit deduplicated by id. A closure is a
+    *reachability* set over the union of those kinds, so it is a plain
+    breadth-first fixpoint with a visited set -- O(V + E) and terminating on
+    cycles -- not the bounded, per-kind multi-objective traversal ``graph_expand``
+    uses (that machinery is unnecessary here and blows up on multi-kind edges).
 
-    Seeds are returned at depth 0 with confidence 1.0; reached units carry their
-    closure depth and decayed confidence. ``confidence_decay`` must lie in
-    ``(0.0, 1.0]``; a bare ``str`` for ``seed_ids`` raises ``TypeError``; a seed
-    absent from ``graph`` raises ``KeyError``. The output is byte-identical for
-    identical inputs.
+    Seeds are returned at depth 0 with confidence 1.0; a reached unit carries its
+    shortest-hop ``depth`` and a confidence decayed multiplicatively by
+    ``confidence_decay`` per hop (per-edge confidence is not folded in: closure is
+    a reachability property, and reference edges are confidence 1.0). Neighbors
+    are visited in id-sorted order, so the output is byte-identical for identical
+    inputs. ``confidence_decay`` must lie in ``(0.0, 1.0]``; a bare ``str`` for
+    ``seed_ids`` raises ``TypeError``; a seed absent from ``graph`` raises
+    ``KeyError``.
     """
     if isinstance(seed_ids, str):
         raise TypeError(f"seed_ids must be a sequence of ids, not a single str: {seed_ids!r}")
     if not 0.0 < confidence_decay <= 1.0:
         raise ValueError(f"confidence_decay must be in (0.0, 1.0], got {confidence_decay}")
     kinds = frozenset(ref_kinds)
-    budget = max(len(graph), 1)
-    hop_budget = dict.fromkeys(kinds, budget)
-    return graph.traverse(
-        seed_ids,
-        kinds=kinds,
-        hop_budget=hop_budget,
-        confidence_decay=confidence_decay,
-    )
+    seeds = sorted(set(seed_ids))
+    for seed in seeds:
+        if seed not in graph:
+            raise KeyError(seed)
+    hops: list[Hop] = []
+    seen: set[str] = set()
+    queue: deque[Hop] = deque()
+    for seed in seeds:
+        seen.add(seed)
+        seed_hop = Hop(seed, 0, 1.0)
+        hops.append(seed_hop)
+        queue.append(seed_hop)
+    while queue:
+        current = queue.popleft()
+        for target in graph.neighbors(current.unit_id, kinds, direction="out"):
+            if target in seen:
+                continue
+            seen.add(target)
+            reached = Hop(target, current.depth + 1, current.confidence * confidence_decay)
+            hops.append(reached)
+            queue.append(reached)
+    return hops
