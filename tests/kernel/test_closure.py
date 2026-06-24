@@ -10,7 +10,7 @@ from omnex.kernel.config import KernelConfig
 from omnex.kernel.expand import closure_expand
 from omnex.kernel.kernel import RetrievalKernel
 
-_REF_KINDS = ("REFERENCES", "FOREIGN_KEY", "IMPORTS", "CALLS")
+_REF_KINDS: tuple[ReferenceKind, ...] = ("REFERENCES", "FOREIGN_KEY", "IMPORTS", "CALLS")
 
 
 def _unit(uid: str, *, kind: UnitKind = "SCHEMA", text: str | None = None) -> Unit:
@@ -112,6 +112,36 @@ def test_missing_seed_raises_keyerror() -> None:
 def test_bare_str_seed_raises_typeerror() -> None:
     with pytest.raises(TypeError, match="sequence of ids"):
         closure_expand("AB", _payments_graph(), _REF_KINDS)
+
+
+def test_closure_spans_multiple_reference_kinds() -> None:
+    # A path mixing all four hard reference kinds, including one multi-kind edge,
+    # is fully reachable: the closure follows the union of the kinds.
+    units = [_unit(name) for name in ("Root", "A", "B", "C", "D")]
+    references = [
+        _ref("Root", "A", "REFERENCES"),
+        _ref("Root", "A", "IMPORTS"),  # multi-kind edge on the same pair
+        _ref("A", "B", "FOREIGN_KEY"),
+        _ref("B", "C", "IMPORTS"),
+        _ref("C", "D", "CALLS"),
+    ]
+    graph = build_graph(units, references)
+    ids = {hop.unit_id for hop in closure_expand(["Root"], graph, _REF_KINDS)}
+    assert ids == {"Root", "A", "B", "C", "D"}
+
+
+def test_closure_is_linear_on_deep_multi_kind_chain() -> None:
+    # A long chain whose every edge carries all four kinds must stay cheap: a
+    # per-kind multi-objective traversal would blow up here, a reachability BFS
+    # does not. Completing at all and returning every node is the guard.
+    length = 60
+    units = [_unit(f"n{i}") for i in range(length)]
+    references = [
+        _ref(f"n{i}", f"n{i + 1}", kind) for i in range(length - 1) for kind in _REF_KINDS
+    ]
+    graph = build_graph(units, references)
+    ids = {hop.unit_id for hop in closure_expand(["n0"], graph, _REF_KINDS)}
+    assert ids == {f"n{i}" for i in range(length)}
 
 
 def _kernel_corpus() -> tuple[list[Unit], list[Reference]]:
