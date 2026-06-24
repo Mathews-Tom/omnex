@@ -100,9 +100,15 @@ def _receipt_dict(receipt: Receipt) -> dict[str, object]:
     return data
 
 
-def _render_json(bundle: ContextBundle, receipt: Receipt) -> str:
-    """Render the bundle and receipt as a deterministic, key-sorted JSON document."""
-    payload = {
+def _result_payload(bundle: ContextBundle, receipt: Receipt) -> dict[str, object]:
+    """The bundle and receipt as a JSON-serializable mapping.
+
+    The single source of truth for the structured query result shared across
+    surfaces: the CLI serializes it to JSON and the MCP query tool returns it
+    directly, so both emit the identical bundle render, token totals, per-unit
+    representations, and receipt the library produced.
+    """
+    return {
         "bundle": {
             "context": bundle.render(),
             "total_tokens": bundle.total_tokens,
@@ -113,7 +119,11 @@ def _render_json(bundle: ContextBundle, receipt: Receipt) -> str:
         },
         "receipt": _receipt_dict(receipt),
     }
-    return json.dumps(payload, indent=2, sort_keys=True)
+
+
+def _render_json(bundle: ContextBundle, receipt: Receipt) -> str:
+    """Render the bundle and receipt as a deterministic, key-sorted JSON document."""
+    return json.dumps(_result_payload(bundle, receipt), indent=2, sort_keys=True)
 
 
 def _format_field(value: object) -> str:

@@ -18,7 +18,7 @@ from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 
 from omnex import api
-from omnex.cli import _collect_files
+from omnex.cli import _DEFAULT_BUDGET, _collect_files, _result_payload, default_config
 
 server = FastMCP(
     "omnex",
@@ -49,6 +49,21 @@ def index(paths: list[str]) -> dict[str, int]:
         "units": len(units),
         "references": len(references),
     }
+
+
+@server.tool()
+def query(corpus: str, question: str, budget: int = _DEFAULT_BUDGET) -> dict[str, object]:
+    """Answer QUESTION over CORPUS under a token budget; return bundle and receipt.
+
+    Routes CORPUS (a file or directory) through its adapters and runs the same
+    byte-exact, model-free T0 pipeline the library and CLI do, then returns the
+    structured ContextBundle and Receipt. The retrieval, ranking, and returned
+    set are exactly the library's; the tool only shapes them into the shared
+    result payload the CLI also emits.
+    """
+    sources = _collect_files([Path(corpus)])
+    bundle, receipt = api.query_sources(sources, question, budget, default_config())
+    return _result_payload(bundle, receipt)
 
 
 def main() -> None:
