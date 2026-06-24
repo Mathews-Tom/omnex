@@ -12,14 +12,16 @@ spec files. ``query`` returns the rendered ``ContextBundle`` and its auditable
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Sequence
 from pathlib import Path
 
 from omnex.adapters import select_adapter
-from omnex.ir.types import Reference, Unit
+from omnex.ir.types import Reference, Unit, normalize_content
 from omnex.kernel.bundle import ContextBundle
 from omnex.kernel.config import KernelConfig
 from omnex.kernel.kernel import RetrievalKernel
+from omnex.kernel.packer import count_tokens
 from omnex.kernel.receipt import Receipt
 
 
@@ -80,7 +82,15 @@ def query_sources(
     Ingests, parses, and links each source into shared IR, then runs the same
     kernel pipeline. At tier T1 the bundle is the complete deterministic
     reference closure rendered as canonical spec fragments, packed under
-    ``budget_tokens``, with its auditable ``Receipt``.
+    ``budget_tokens``. The receipt's ``baseline_tokens`` is set to the honest
+    full-document dump (the naive paste-everything upper bound) so returned vs
+    baseline compares against the real document rather than the kernel's
+    sum-of-units (which double-counts schema text already inside its fields);
+    ``reference_closure_complete`` is set by the kernel.
     """
     units, references = _route_sources(sources)
-    return query(units, question, budget_tokens, config, references)
+    bundle, receipt = query(units, question, budget_tokens, config, references)
+    full_dump = sum(
+        count_tokens(normalize_content(source.read_text(encoding="utf-8"))) for source in sources
+    )
+    return bundle, dataclasses.replace(receipt, baseline_tokens=full_dump)
