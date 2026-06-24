@@ -1,18 +1,21 @@
 """Public library API: index a corpus and query it under a token budget.
 
-These are the thin entry points most callers use. ``index`` builds a reusable
-indexed kernel; ``query`` is the one-shot convenience that indexes a corpus and
-answers a single question, returning the rendered ``ContextBundle`` and its
-auditable ``Receipt``.
-
-Both operate purely on the IR (``Unit`` and ``Reference``), so the public surface
-stays modality-blind. No model load, network, or file-system access.
+These are the thin entry points most callers use. ``index`` and ``query`` operate
+purely on the IR (``Unit`` and ``Reference``), are modality-blind, and do no
+model, network, or file-system access. ``index_sources`` and ``query_sources``
+are the source-level entry points: they route each source through the adapter
+that claims it (the only file-system reads happen there) and then run the same IR
+pipeline, so the kernel stays modality-blind while callers can hand omnex raw
+spec files. ``query`` returns the rendered ``ContextBundle`` and its auditable
+``Receipt``.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
+from pathlib import Path
 
+from omnex.adapters import select_adapter
 from omnex.ir.types import Reference, Unit
 from omnex.kernel.bundle import ContextBundle
 from omnex.kernel.config import KernelConfig
@@ -25,6 +28,29 @@ def index(corpus: Sequence[Unit], references: Sequence[Reference] = ()) -> Retri
     kernel = RetrievalKernel()
     kernel.index(corpus, references)
     return kernel
+
+
+def _route_sources(sources: Sequence[Path]) -> tuple[list[Unit], list[Reference]]:
+    """Route each source through its claiming adapter into shared IR.
+
+    For each source the claiming adapter ingests, parses, and links, accumulating
+    the units and reference edges. Failing loud when no adapter claims a source.
+    """
+    units: list[Unit] = []
+    references: list[Reference] = []
+    for source in sources:
+        adapter = select_adapter(source)
+        document = adapter.ingest(source)
+        document_units = adapter.parse(document)
+        units.extend(document_units)
+        references.extend(adapter.link(document, document_units))
+    return units, references
+
+
+def index_sources(sources: Sequence[Path]) -> RetrievalKernel:
+    """Build a reusable kernel by routing ``sources`` through their adapters."""
+    units, references = _route_sources(sources)
+    return index(units, references)
 
 
 def query(
