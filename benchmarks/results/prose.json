@@ -28,7 +28,7 @@
     "name": "full_dump",
     "role": "demoted_upper_bound"
   },
-  "recall_honesty": "T0 is the lexical, byte-exact floor: it spends far fewer tokens than the full dump at equal recall, but its recall is lexical-only. Where a relevant unit shares no vocabulary with the query (the securing-traffic page in configure_tls), no T0 budget can surface it -- it is never a lexical candidate, so the recall ceiling below 1.0 is a genuine property of lexical retrieval, not the floor budget. T0 therefore trails embedding-based (chunk-and-embed) retrieval on such queries and makes no claim to beat embeddings at T0; the deferred T2 vector lane (Stack G) is what closes that recall gap. This family forward-references it, not parity.",
+  "recall_honesty": "T0 is the lexical, byte-exact floor: it spends far fewer tokens than the full dump at equal recall, but its recall is lexical-only. Where a relevant unit shares no vocabulary with the query (the securing-traffic page in configure_tls), no T0 budget can surface it -- it is never a lexical candidate, so the recall ceiling below 1.0 is a genuine property of lexical retrieval, not the floor budget. T0 therefore trails embedding-based (chunk-and-embed) retrieval on such queries and makes no claim to beat embeddings at T0. The opt-in T2 vector lane closes that recall gap; its comparison against the chunk-and-embed headline at equal recall is recorded in the 't2' section of this artifact, and it is the weaker pinned_reproducible determinism class, never byte_exact.",
   "tasks": [
     {
       "id": "configure_tls",
@@ -74,7 +74,115 @@
     }
   ],
   "latency": {
-    "omnex_p95_seconds": 0.08047812501899898,
+    "omnex_p95_seconds": 0.08716183388605714,
     "note": "environment-dependent; excluded from the determinism guarantee"
+  },
+  "t2": {
+    "recall_target": 1.0,
+    "tier": "T2",
+    "determinism_class": "pinned_reproducible",
+    "recall_basis": "lexical_plus_vector",
+    "omnex": {
+      "tier": "T2",
+      "budget_policy": "full_ranking_tokens_at_recall",
+      "bm25_profile": {
+        "text": 1.0,
+        "title": 2.0,
+        "breadcrumb": 1.5,
+        "summary": 1.0
+      },
+      "hop_budget_by_kind": {
+        "CONTAINS": 1,
+        "SIBLING": 0,
+        "CROSS_REF": 1
+      },
+      "confidence_decay": 0.9
+    },
+    "model_provenance": {
+      "model": "BAAI/bge-small-en-v1.5",
+      "tokenizer": "BAAI/bge-small-en-v1.5",
+      "runtime": "fastembed==0.8.0; onnxruntime==1.27.0",
+      "architecture": "Darwin/arm64"
+    },
+    "headline_baseline": {
+      "name": "chunk_and_embed",
+      "role": "headline",
+      "embedder": "BAAI/bge-small-en-v1.5",
+      "determinism": "pinned_reproducible",
+      "chunk_tokens": 256,
+      "chunk_overlap": 32,
+      "rerank": null
+    },
+    "upper_bound_baseline": {
+      "name": "full_dump",
+      "role": "demoted_upper_bound"
+    },
+    "corpus": {
+      "directory": "prose",
+      "full_dump_tokens": 489
+    },
+    "tasks": [
+      {
+        "id": "configure_tls",
+        "query": "configure TLS ingress controller termination",
+        "gold_label_count": 3,
+        "recall_target": 1.0,
+        "tokens_at_equal_recall": {
+          "omnex_t2": 384,
+          "chunk_and_embed": 543,
+          "full_dump": 489
+        },
+        "recall": {
+          "omnex_t2": 1.0,
+          "chunk_and_embed": 1.0,
+          "full_dump": 1.0
+        },
+        "f1": {
+          "omnex_t2": 0.6666666666666666,
+          "chunk_and_embed": 0.6666666666666666,
+          "full_dump": 0.6666666666666666
+        },
+        "omnex_t2_reaches_target": true,
+        "omnex_t2_at_or_below_chunk_embed_at_equal_recall": true,
+        "recall_basis": "lexical_plus_vector"
+      },
+      {
+        "id": "provision_storage",
+        "query": "provision durable persistent storage stateful workload",
+        "gold_label_count": 3,
+        "recall_target": 1.0,
+        "tokens_at_equal_recall": {
+          "omnex_t2": 195,
+          "chunk_and_embed": 217,
+          "full_dump": 489
+        },
+        "recall": {
+          "omnex_t2": 1.0,
+          "chunk_and_embed": 1.0,
+          "full_dump": 1.0
+        },
+        "f1": {
+          "omnex_t2": 0.6666666666666666,
+          "chunk_and_embed": 0.6666666666666666,
+          "full_dump": 0.6666666666666666
+        },
+        "omnex_t2_reaches_target": true,
+        "omnex_t2_at_or_below_chunk_embed_at_equal_recall": true,
+        "recall_basis": "lexical_plus_vector"
+      }
+    ],
+    "totals": {
+      "tokens_at_equal_recall": {
+        "omnex_t2": 579,
+        "chunk_and_embed": 760,
+        "full_dump": 978
+      },
+      "omnex_t2_at_or_below_chunk_embed_at_equal_recall": true
+    },
+    "note": "The opt-in T2 vector lane recovers the semantically distant unit the lexical T0 floor cannot reach at any budget, so T2 closes the recall gap to the chunk-and-embed level and reaches it at fewer-or-equal tokens at equal recall. T2 is the weaker pinned_reproducible determinism class, never byte_exact: these token counts reproduce only with the recorded model, tokenizer, runtime, and architecture.",
+    "latency": {
+      "omnex_p95_seconds": 1.072877625003457,
+      "note": "environment-dependent; excluded from the determinism guarantee"
+    }
   }
 }
