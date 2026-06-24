@@ -67,3 +67,20 @@ def query(
     """
     kernel = index(corpus, references)
     return kernel.retrieve(question, budget_tokens, config)
+
+
+def query_sources(
+    sources: Sequence[Path],
+    question: str,
+    budget_tokens: int,
+    config: KernelConfig,
+) -> tuple[ContextBundle, Receipt]:
+    """Route ``sources`` through their adapters and answer ``question``.
+
+    Ingests, parses, and links each source into shared IR, then runs the same
+    kernel pipeline. At tier T1 the bundle is the complete deterministic
+    reference closure rendered as canonical spec fragments, packed under
+    ``budget_tokens``, with its auditable ``Receipt``.
+    """
+    units, references = _route_sources(sources)
+    return query(units, question, budget_tokens, config, references)
