@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -103,9 +104,17 @@ def test_parse_is_byte_identical_on_repeat() -> None:
 
 def test_spans_recover_source_text() -> None:
     adapter, document, source = _ingested()
-    for unit in adapter.parse(document):
-        assert unit.span.start <= unit.span.end
+    units = adapter.parse(document)
+    for unit in units:
+        # The span captures a complete JSON value: it parses, and the addressed
+        # bytes are exactly the unit text, proving the boundaries are well-formed
+        # and aligned to a real construct rather than any arbitrary slice.
         assert source[unit.span.start : unit.span.end] == unit.text
+        assert json.loads(unit.text) is not None
+    money = next(u for u in units if u.kind == "SCHEMA" and u.title == "Money")
+    assert set(json.loads(money.text)["properties"]) == {"amount", "currency"}
+    operation = next(u for u in units if u.title == "POST /payments")
+    assert "responses" in json.loads(operation.text)
 
 
 def test_operations_and_schemas_are_protected() -> None:
@@ -130,3 +139,45 @@ def test_parse_rejects_source_changed_since_ingest(tmp_path: Path) -> None:
     spec.write_text('{"openapi": "3.1.0", "paths": {}}', encoding="utf-8")
     with pytest.raises(ValueError, match="changed since ingest"):
         adapter.parse(document)
+
+
+def test_claims_rejects_swagger_2() -> None:
+    # Swagger 2.0 is out of scope: it must not be claimed (and then half-parsed).
+    import tempfile
+
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
+        handle.write('{"swagger": "2.0", "definitions": {"X": {"type": "object"}}}')
+        swagger = Path(handle.name)
+    assert SpecAdapter().claims(swagger) is False
+
+
+def test_parse_rejects_duplicate_object_keys(tmp_path: Path) -> None:
+    # A duplicate key would yield two units colliding on one pointer-derived id;
+    # the parser fails loud instead.
+    spec = tmp_path / "dup.json"
+    spec.write_text(
+        '{"openapi": "3.1.0", "paths": {}, "components": {"schemas": '
+        '{"X": {"type": "object", "properties": {"a": {"type": "string"}, '
+        '"a": {"type": "number"}}}}}}',
+        encoding="utf-8",
+    )
+    adapter = SpecAdapter()
+    document = adapter.ingest(spec)
+    with pytest.raises(ValueError, match="duplicate object key"):
+        adapter.parse(document)
+
+
+def test_ref_with_sibling_keys_stays_a_field(tmp_path: Path) -> None:
+    # A $ref carrying sibling content keeps that inline content as a FIELD; only a
+    # sole-member $ref is a pure schema edge.
+    spec = tmp_path / "siblings.json"
+    spec.write_text(
+        '{"openapi": "3.1.0", "paths": {}, "components": {"schemas": {"Wrap": '
+        '{"type": "object", "properties": {"annotated": {"$ref": '
+        '"#/components/schemas/Wrap", "description": "kept"}}}}}}',
+        encoding="utf-8",
+    )
+    adapter = SpecAdapter()
+    document = adapter.ingest(spec)
+    fields = [u for u in adapter.parse(document) if u.kind == "FIELD"]
+    assert any(u.title == "annotated" for u in fields)
