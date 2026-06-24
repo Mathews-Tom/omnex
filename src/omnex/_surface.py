@@ -65,10 +65,14 @@ def collect_files(paths: Iterable[Path]) -> list[Path]:
     hidden directory (a leading-dot path part, e.g. ``.git`` or ``.DS_Store``)
     are skipped so directory indexing is practical; a non-hidden source that no
     adapter claims still fails loud. Explicit file arguments are kept in the
-    caller's given order and never filtered.
+    caller's given order and never filtered. A path that does not exist fails
+    loud here, so the surfaces report a missing path uniformly rather than
+    letting it reach the adapters as a misleading "unclaimable" error.
     """
     collected: list[Path] = []
     for path in paths:
+        if not path.exists():
+            raise ValueError(f"path does not exist: {path}")
         if path.is_dir():
             collected.extend(
                 sorted(
@@ -90,8 +94,12 @@ def index_corpus(sources: Sequence[Path]) -> tuple[int, int, int]:
     (failing loud when no adapter claims it), then builds the FTS index and
     StructureGraph so a corpus that routes but cannot be indexed (e.g. a malformed
     edge) fails here rather than silently at query time. Returns the
-    ``(documents, units, references)`` counts. No state is persisted.
+    ``(documents, units, references)`` counts. No state is persisted. An empty
+    corpus (no claimable files, e.g. a directory of only hidden files) fails loud
+    rather than reporting a meaningless zero shape.
     """
+    if not sources:
+        raise ValueError("corpus is empty: no indexable files found")
     units, references, documents = api._route_sources(sources)
     api.index(units, references)
     return len(documents), len(units), len(references)
