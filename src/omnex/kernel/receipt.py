@@ -21,8 +21,11 @@ from omnex.kernel.config import DeterminismClass
 class Receipt:
     """The audit trail for one retrieval.
 
-    ``returned_tokens`` is the emitted token total and ``baseline_tokens`` the
-    full-document dump upper bound it is measured against. ``tiers_run`` lists the
+    ``returned_tokens`` is the emitted token total measured against
+    ``baseline_tokens``, the full-dump upper bound. The modality-blind kernel
+    sets it to the sum of every indexed unit's text (the naive dump-every-unit
+    cost); the source-routed ``query_sources`` refines it to the true
+    whole-document dump. ``tiers_run`` lists the
     tiers exercised. ``model_used``/``model_version`` and ``extraction_used``
     record any opt-in lane outside the byte-exact floor. ``determinism_class`` is
     the reproducibility guarantee this run may claim. ``reference_closure_complete``
