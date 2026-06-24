@@ -1,0 +1,127 @@
+{
+  "family": "specs",
+  "generated_by": "omnex-bench",
+  "recall_target": 1.0,
+  "token_ledger": "whitespace word count (omnex.kernel.packer.count_tokens)",
+  "corpus": {
+    "file": "commerce_api.json",
+    "full_dump_tokens": 938
+  },
+  "omnex": {
+    "tier": "T1",
+    "budget_policy": "min_complete_closure",
+    "bm25_profile": {
+      "text": 1.0,
+      "title": 2.0,
+      "breadcrumb": 1.5,
+      "summary": 1.0
+    },
+    "hop_budget_by_kind": {
+      "CONTAINS": 0,
+      "SIBLING": 0,
+      "CROSS_REF": 0,
+      "REFERENCES": 8,
+      "FOREIGN_KEY": 8
+    },
+    "confidence_decay": 0.9
+  },
+  "headline_baseline": {
+    "name": "chunk_and_embed",
+    "role": "headline",
+    "embedder": "BAAI/bge-small-en-v1.5",
+    "determinism": "pinned_reproducible",
+    "chunk_tokens": 256,
+    "chunk_overlap": 32,
+    "rerank": null
+  },
+  "upper_bound_baseline": {
+    "name": "full_dump",
+    "role": "demoted_upper_bound"
+  },
+  "tasks": [
+    {
+      "id": "create_payment",
+      "query": "create payment",
+      "gold_label_count": 6,
+      "omnex_budget": 172,
+      "omnex_closure_complete": true,
+      "recall_held_equal": true,
+      "tokens_at_recall": {
+        "omnex_t1": 210,
+        "chunk_and_embed": 917,
+        "full_dump": 938
+      },
+      "recall": {
+        "omnex_t1": 1.0,
+        "chunk_and_embed": 1.0,
+        "full_dump": 1.0
+      },
+      "f1": {
+        "omnex_t1": 1.0,
+        "chunk_and_embed": 0.5454545454545454,
+        "full_dump": 0.5454545454545454
+      },
+      "verdict": "omnex T1 210 <= chunk-and-embed 917 at recall 1.00 (0.23x of headline)"
+    },
+    {
+      "id": "dispatch_shipment",
+      "query": "dispatch shipment parcel",
+      "gold_label_count": 8,
+      "omnex_budget": 211,
+      "omnex_closure_complete": true,
+      "recall_held_equal": true,
+      "tokens_at_recall": {
+        "omnex_t1": 259,
+        "chunk_and_embed": 1065,
+        "full_dump": 938
+      },
+      "recall": {
+        "omnex_t1": 1.0,
+        "chunk_and_embed": 1.0,
+        "full_dump": 1.0
+      },
+      "f1": {
+        "omnex_t1": 1.0,
+        "chunk_and_embed": 0.6666666666666666,
+        "full_dump": 0.6666666666666666
+      },
+      "verdict": "omnex T1 259 <= chunk-and-embed 1065 at recall 1.00 (0.24x of headline)"
+    },
+    {
+      "id": "enroll_subscriber",
+      "query": "enroll subscriber recurring plan",
+      "gold_label_count": 6,
+      "omnex_budget": 162,
+      "omnex_closure_complete": true,
+      "recall_held_equal": true,
+      "tokens_at_recall": {
+        "omnex_t1": 191,
+        "chunk_and_embed": 1065,
+        "full_dump": 938
+      },
+      "recall": {
+        "omnex_t1": 1.0,
+        "chunk_and_embed": 1.0,
+        "full_dump": 1.0
+      },
+      "f1": {
+        "omnex_t1": 1.0,
+        "chunk_and_embed": 0.5454545454545454,
+        "full_dump": 0.5454545454545454
+      },
+      "verdict": "omnex T1 191 <= chunk-and-embed 1065 at recall 1.00 (0.18x of headline)"
+    }
+  ],
+  "totals": {
+    "tokens_at_recall": {
+      "omnex_t1": 660,
+      "chunk_and_embed": 3047,
+      "full_dump": 2814
+    },
+    "omnex_at_or_below_headline_at_equal_recall": true
+  },
+  "latency": {
+    "omnex_p95_seconds": 0.009002082981169224,
+    "note": "environment-dependent; excluded from the determinism guarantee"
+  }
+}

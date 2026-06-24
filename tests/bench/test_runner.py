@@ -133,3 +133,34 @@ def test_write_artifact_round_trips(tmp_path: Path) -> None:
     path = write_artifact(artifact, tmp_path)
     assert path == tmp_path / "specs.json"
     assert json.loads(path.read_text()) == artifact
+
+
+def test_checked_in_artifact_shows_the_headline_win_at_equal_recall() -> None:
+    # The checked-in headline artifact is the v0 defensible number: it must show
+    # omnex T1 <= chunk-and-embed at equal recall, against the pinned strong model.
+    artifact = json.loads((_RESULTS / "specs.json").read_text())
+    assert artifact["headline_baseline"]["embedder"] == "BAAI/bge-small-en-v1.5"
+    assert artifact["headline_baseline"]["determinism"] == "pinned_reproducible"
+    assert artifact["totals"]["omnex_at_or_below_headline_at_equal_recall"] is True
+    for task in artifact["tasks"]:
+        assert task["recall_held_equal"] is True
+        assert task["recall"][OMNEX] == task["recall"][CHUNK_AND_EMBED] == 1.0
+        assert task["tokens_at_recall"][OMNEX] <= task["tokens_at_recall"][CHUNK_AND_EMBED]
+
+
+def test_checked_in_artifact_omnex_numbers_match_a_clean_run() -> None:
+    # The omnex T1 and full-dump figures are embedder-independent, so a clean
+    # tfidf run reproduces them byte-for-byte. Pinning them here means a hand-edit
+    # of the checked-in metric values (the one number the headline rests on) fails
+    # CI even when the inequality it asserts stays trivially true.
+    artifact = json.loads((_RESULTS / "specs.json").read_text())
+    fresh = run_family(load_family(_TASKS), "tfidf")
+    assert artifact["corpus"]["full_dump_tokens"] == fresh["corpus"]["full_dump_tokens"]
+    fresh_by_id = {task["id"]: task for task in fresh["tasks"]}
+    for task in artifact["tasks"]:
+        clean = fresh_by_id[task["id"]]
+        assert task["omnex_budget"] == clean["omnex_budget"]
+        assert task["tokens_at_recall"][OMNEX] == clean["tokens_at_recall"][OMNEX]
+        assert task["tokens_at_recall"][FULL_DUMP] == clean["tokens_at_recall"][FULL_DUMP]
+        assert task["recall"][OMNEX] == clean["recall"][OMNEX]
+        assert task["f1"][OMNEX] == clean["f1"][OMNEX]
