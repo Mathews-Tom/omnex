@@ -166,12 +166,16 @@ def test_t3_extraction_request_raises() -> None:
         kernel.retrieve("payment", 100, _config(tier="T3"))
 
 
-def test_t1_closure_request_raises() -> None:
-    # T1 reference closure is not wired in this stack; requesting it must fail
-    # loud rather than silently running the bounded T0 path under a T1 label.
+def test_t1_returns_reference_closure_and_reports_complete() -> None:
+    # T1 is now wired: it closure-expands the reference edges and the receipt
+    # reports the closure complete when every closure unit is emitted.
     kernel = _indexed()
-    with pytest.raises(NotImplementedError, match="T1 reference closure"):
-        kernel.retrieve("payment", 100, _config(tier="T1"))
+    bundle, receipt = kernel.retrieve("payment request", 100, _config(tier="T1"))
+    included = {rep.unit_id for rep in bundle.representations if rep.mode == "INCLUDE"}
+    assert {"u_op", "u_req", "u_money"} <= included
+    assert receipt.reference_closure_complete is True
+    assert receipt.determinism_class == "byte_exact"
+    assert "T1" in receipt.tiers_run
 
 
 def test_enable_rerank_request_raises() -> None:

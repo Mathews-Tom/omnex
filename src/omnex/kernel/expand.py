@@ -8,17 +8,19 @@ primitive ``StructureGraph.traverse``; the allowed edge kinds are exactly the
 keys of ``hop_budget_by_kind``, so callers configure expansion with a single
 budget mapping.
 
-This is deliberately *bounded*, not transitive: the deterministic T1 reference
-closure is a separate, later seam. The result is whatever ``traverse`` returns —
-complete under the budgets, deduplicated by id, and in deterministic order — so
-the same seeds, graph, budgets, and decay always yield byte-identical output.
+``graph_expand`` is deliberately *bounded*, not transitive. ``closure_expand`` is
+the deterministic T1 reference closure: the unbounded transitive closure over a
+chosen set of reference edge kinds, terminating on cycles. Both return whatever
+``traverse`` gives — complete, deduplicated by id, and in deterministic order —
+so the same inputs always yield byte-identical output.
 
 No model load, network, or file-system access.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections import deque
+from collections.abc import Iterable, Mapping, Sequence
 
 from omnex.ir.graph import Hop, StructureGraph
 
@@ -57,3 +59,57 @@ def graph_expand(
         hop_budget=hop_budget_by_kind,
         confidence_decay=confidence_decay,
     )
+
+
+def closure_expand(
+    seed_ids: Sequence[str],
+    graph: StructureGraph,
+    ref_kinds: Iterable[str],
+    confidence_decay: float = 1.0,
+) -> list[Hop]:
+    """Compute the deterministic transitive closure over reference edges.
+
+    Starting from ``seed_ids``, follow every edge whose kind is in ``ref_kinds``
+    (the hard reference edges: REFERENCES, FOREIGN_KEY, IMPORTS, CALLS) to a
+    fixpoint, returning every reachable unit deduplicated by id. A closure is a
+    *reachability* set over the union of those kinds, so it is a plain
+    breadth-first fixpoint with a visited set -- O(V + E) and terminating on
+    cycles -- not the bounded, per-kind multi-objective traversal ``graph_expand``
+    uses (that machinery is unnecessary here and blows up on multi-kind edges).
+
+    Seeds are returned at depth 0 with confidence 1.0; a reached unit carries its
+    shortest-hop ``depth`` and a confidence decayed multiplicatively by
+    ``confidence_decay`` per hop (per-edge confidence is not folded in: closure is
+    a reachability property, and reference edges are confidence 1.0). Neighbors
+    are visited in id-sorted order, so the output is byte-identical for identical
+    inputs. ``confidence_decay`` must lie in ``(0.0, 1.0]``; a bare ``str`` for
+    ``seed_ids`` raises ``TypeError``; a seed absent from ``graph`` raises
+    ``KeyError``.
+    """
+    if isinstance(seed_ids, str):
+        raise TypeError(f"seed_ids must be a sequence of ids, not a single str: {seed_ids!r}")
+    if not 0.0 < confidence_decay <= 1.0:
+        raise ValueError(f"confidence_decay must be in (0.0, 1.0], got {confidence_decay}")
+    kinds = frozenset(ref_kinds)
+    seeds = sorted(set(seed_ids))
+    for seed in seeds:
+        if seed not in graph:
+            raise KeyError(seed)
+    hops: list[Hop] = []
+    seen: set[str] = set()
+    queue: deque[Hop] = deque()
+    for seed in seeds:
+        seen.add(seed)
+        seed_hop = Hop(seed, 0, 1.0)
+        hops.append(seed_hop)
+        queue.append(seed_hop)
+    while queue:
+        current = queue.popleft()
+        for target in graph.neighbors(current.unit_id, kinds, direction="out"):
+            if target in seen:
+                continue
+            seen.add(target)
+            reached = Hop(target, current.depth + 1, current.confidence * confidence_decay)
+            hops.append(reached)
+            queue.append(reached)
+    return hops
