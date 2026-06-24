@@ -3,8 +3,8 @@
 Exposes the same ``index`` and ``query`` operations the library and CLI provide
 as MCP tools over stdio, so an MCP client gets identical retrieval, the same
 returned set, and the same receipt the library produces. The tools are thin
-wrappers over :mod:`omnex.api`; they change no retrieval ranking, no returned
-set, and no receipt schema.
+wrappers over :mod:`omnex.api` (via the shared :mod:`omnex._surface` helpers);
+they change no retrieval ranking, no returned set, and no receipt schema.
 
 This module requires the optional ``mcp`` dependency (the ``[mcp]`` extra). It is
 never imported by ``import omnex``, so the core install does not depend on it;
@@ -18,7 +18,13 @@ from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 
 from omnex import api
-from omnex.cli import _DEFAULT_BUDGET, _collect_files, _result_payload, default_config
+from omnex._surface import (
+    _DEFAULT_BUDGET,
+    collect_files,
+    default_config,
+    index_corpus,
+    result_payload,
+)
 
 server = FastMCP(
     "omnex",
@@ -32,38 +38,32 @@ server = FastMCP(
 
 @server.tool()
 def index(paths: list[str]) -> dict[str, int]:
-    """Ingest, parse, and link PATHS into IR and report the indexed corpus shape.
+    """Ingest, parse, and link the given paths into IR and report the corpus shape.
 
     Each path is routed through its claiming adapter -- failing loud when none
     claims it -- and built into the FTS index and StructureGraph to validate the
     full index path. A directory path is expanded to its files. No state is
     persisted; the tool returns the corpus shape it would index.
     """
-    sources = _collect_files([Path(p) for p in paths])
-    units, references, documents = api._route_sources(sources)
-    # Build the index and graph so a corpus that routes but cannot be indexed
-    # fails here rather than silently at query time.
-    api.index(units, references)
-    return {
-        "documents": len(documents),
-        "units": len(units),
-        "references": len(references),
-    }
+    if not paths:
+        raise ValueError("index requires at least one path")
+    documents, units, references = index_corpus(collect_files([Path(p) for p in paths]))
+    return {"documents": documents, "units": units, "references": references}
 
 
 @server.tool()
 def query(corpus: str, question: str, budget: int = _DEFAULT_BUDGET) -> dict[str, object]:
-    """Answer QUESTION over CORPUS under a token budget; return bundle and receipt.
+    """Answer a question over a corpus under a token budget; return bundle and receipt.
 
-    Routes CORPUS (a file or directory) through its adapters and runs the same
+    Routes the corpus (a file or directory) through its adapters and runs the same
     byte-exact, model-free T0 pipeline the library and CLI do, then returns the
-    structured ContextBundle and Receipt. The retrieval, ranking, and returned
-    set are exactly the library's; the tool only shapes them into the shared
-    result payload the CLI also emits.
+    structured ContextBundle and Receipt. The retrieval, ranking, and returned set
+    are exactly the library's; the tool only shapes them into the shared result
+    payload the CLI also emits.
     """
-    sources = _collect_files([Path(corpus)])
+    sources = collect_files([Path(corpus)])
     bundle, receipt = api.query_sources(sources, question, budget, default_config())
-    return _result_payload(bundle, receipt)
+    return result_payload(bundle, receipt)
 
 
 def main() -> None:

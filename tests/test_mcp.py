@@ -21,7 +21,8 @@ from pathlib import Path
 from typing import Any
 
 import omnex
-from omnex.cli import _render_json, default_config
+from omnex._surface import default_config
+from omnex.cli import _render_json
 from omnex.mcp import server
 
 _FIXTURES = Path(__file__).resolve().parent / "fixtures"
