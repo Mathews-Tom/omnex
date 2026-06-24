@@ -592,6 +592,116 @@ def _crossref_edges(document: Document, nodes: Sequence[_Node], flavor: Flavor) 
     return _markdown_crossref_edges(document, nodes)
 
 
+# Footnote reference [^id] and its definition line [^id]: ...
+_FOOTNOTE_REF_RE = re.compile(r"\[\^([^\]\s]+)\]")
+_FOOTNOTE_DEF_RE = re.compile(r"^[ \t]*\[\^([^\]\s]+)\]:", re.MULTILINE)
+# Reference-style link [text][label] (label empty => collapsed to text) and a
+# link reference definition [label]: dest (a footnote's ^label is excluded).
+_REF_LINK_RE = re.compile(r"(?<!!)\[([^\]]+)\]\[([^\]]*)\]")
+_REF_DEF_RE = re.compile(r"^[ \t]*\[([^\]^]+)\]:[ \t]*(\S+)", re.MULTILINE)
+# reST footnote/citation reference [id]_ and its definition .. [id] ...
+_REST_LABEL_REF_RE = re.compile(r"\[([\w#.\-]+)\]_")
+_REST_LABEL_DEF_RE = re.compile(r"^[ \t]*\.\.[ \t]+\[([\w#.\-]+)\]", re.MULTILINE)
+
+_CITES_FOOTNOTE_CONF = 0.6
+_CITES_REFLINK_CONF = 0.7
+
+
+def _footnote_defs(nodes: Sequence[_Node]) -> dict[str, str]:
+    """Map each footnote id to the unit that defines it (first occurrence wins)."""
+    defs: dict[str, str] = {}
+    for node in nodes:
+        if node.unit.protect:
+            continue
+        for match in _FOOTNOTE_DEF_RE.finditer(node.unit.text):
+            defs.setdefault(match.group(1), node.unit.id)
+    return defs
+
+
+def _reflink_defs(nodes: Sequence[_Node]) -> dict[str, str]:
+    """Map each link reference label (lowercased) to its destination string."""
+    defs: dict[str, str] = {}
+    for node in nodes:
+        if node.unit.protect:
+            continue
+        for match in _REF_DEF_RE.finditer(node.unit.text):
+            defs.setdefault(match.group(1).strip().lower(), match.group(2))
+    return defs
+
+
+def _markdown_cites_edges(document: Document, nodes: Sequence[_Node]) -> list[Reference]:
+    """Recover CITES edges from Markdown footnotes and reference-style links."""
+    footnotes = _footnote_defs(nodes)
+    reflinks = _reflink_defs(nodes)
+    slugs = _section_slugs(nodes)
+    edges: list[Reference] = []
+    for node in nodes:
+        if node.unit.protect:
+            continue
+        text = node.unit.text
+        for match in _FOOTNOTE_REF_RE.finditer(text):
+            if text[match.end() : match.end() + 1] == ":":
+                continue  # the definition's own marker, not a reference
+            target = footnotes.get(match.group(1))
+            if target is not None and target != node.unit.id:
+                edges.append(
+                    Reference(
+                        node.unit.id,
+                        target,
+                        "CITES",
+                        _CITES_FOOTNOTE_CONF,
+                        (f"[^{match.group(1)}]",),
+                    )
+                )
+        for match in _REF_LINK_RE.finditer(text):
+            label = (match.group(2) or match.group(1)).strip().lower()
+            dest = reflinks.get(label)
+            if dest is None:
+                continue
+            resolved = _resolve_anchor(document.uri, dest, slugs)
+            if resolved is not None and resolved[0] != node.unit.id:
+                edges.append(
+                    Reference(
+                        node.unit.id, resolved[0], "CITES", _CITES_REFLINK_CONF, (f"[{label}]",)
+                    )
+                )
+    return edges
+
+
+def _rest_cites_edges(nodes: Sequence[_Node]) -> list[Reference]:
+    """Recover CITES edges from reST footnote and citation references."""
+    defs: dict[str, str] = {}
+    for node in nodes:
+        if node.unit.protect:
+            continue
+        for match in _REST_LABEL_DEF_RE.finditer(node.unit.text):
+            defs.setdefault(match.group(1), node.unit.id)
+    edges: list[Reference] = []
+    for node in nodes:
+        if node.unit.protect:
+            continue
+        for match in _REST_LABEL_REF_RE.finditer(node.unit.text):
+            target = defs.get(match.group(1))
+            if target is not None and target != node.unit.id:
+                edges.append(
+                    Reference(
+                        node.unit.id,
+                        target,
+                        "CITES",
+                        _CITES_FOOTNOTE_CONF,
+                        (f"[{match.group(1)}]",),
+                    )
+                )
+    return edges
+
+
+def _cites_edges(document: Document, nodes: Sequence[_Node], flavor: Flavor) -> list[Reference]:
+    """Recover CITES edges for the document's flavor."""
+    if flavor == "rest":
+        return _rest_cites_edges(nodes)
+    return _markdown_cites_edges(document, nodes)
+
+
 def _dedup_sort(refs: Sequence[Reference]) -> list[Reference]:
     """Collapse duplicate (source, target, kind) edges and sort canonically.
 
@@ -665,10 +775,10 @@ class ProseAdapter:
 
         Re-parses the source into the heading tree and recovers, deterministically
         and model-free: ``CONTAINS`` from a section to each direct child,
-        ``SIBLING`` between adjacent sections sharing a parent, and ``CROSS_REF``
-        for intra-document anchor links and inter-document links resolved to a
-        neighbor section. link fails loud when the units it is given do not match
-        the parsed source.
+        ``SIBLING`` between adjacent sections sharing a parent, ``CROSS_REF`` for
+        intra-document anchor links and inter-document links resolved to a
+        neighbor section, and ``CITES`` for footnotes and reference-style links.
+        link fails loud when the units it is given do not match the parsed source.
         """
         flavor = _flavor(document.uri)
         source = read_source(document)
@@ -677,6 +787,7 @@ class ProseAdapter:
             raise ValueError("link received units that do not match the parsed source")
         edges = _structural_edges(nodes)
         edges += _crossref_edges(document, nodes, flavor)
+        edges += _cites_edges(document, nodes, flavor)
         return _dedup_sort(edges)
 
     def capabilities(self) -> AdapterCapabilities:
