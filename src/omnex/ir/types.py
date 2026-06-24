@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import unicodedata
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
 Modality = Literal["prose", "code", "spec", "config", "pdf", "image", "audio", "video"]
@@ -150,3 +151,19 @@ def make_unit_id(*, document_id: str, span: Span, text: str) -> str:
     """Derive a stable unit id from its document, span, and normalized text."""
     body = f"{document_id}\x00{span.start}\x00{span.end}\x00{normalize_content(text)}"
     return f"unit:{hashlib.sha256(body.encode()).hexdigest()[:16]}"
+
+
+def read_source(document: Document) -> str:
+    """Re-read a document's source from its uri, verify the hash, and normalize.
+
+    The IR carries identity, not text, so parsing, linking, and token-measuring
+    re-read the source from ``document.uri`` (a local path). The content hash is
+    re-verified so a source that changed since ingest fails loud rather than
+    yielding stale structure or a token count that does not match the parsed
+    units. Returns the normalized source text. This is the single hash-verified
+    reader shared by adapters and the public API.
+    """
+    text = Path(document.uri).read_text(encoding="utf-8")
+    if compute_content_hash(text) != document.content_hash:
+        raise ValueError(f"source changed since ingest: {document.uri}")
+    return normalize_content(text)

@@ -13,7 +13,7 @@ SQLite connection only when a kernel is instantiated, never at import time.
 
 from __future__ import annotations
 
-from omnex.api import index, query
+from omnex.api import index, index_sources, query, query_sources
 from omnex.ir.types import Document, Reference, Span, Unit
 from omnex.kernel.bundle import ContextBundle
 from omnex.kernel.config import DeterminismClass, KernelConfig, Tier
@@ -33,5 +33,7 @@ __all__ = [
     "Unit",
     "__version__",
     "index",
+    "index_sources",
     "query",
+    "query_sources",
 ]
