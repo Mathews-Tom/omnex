@@ -421,6 +421,8 @@ def _build_prose_artifact(
                 "recall": {OMNEX_T0: outcome.omnex.recall, FULL_DUMP: outcome.full_dump.recall},
                 "omnex_below_full_dump_at_equal_recall": below,
                 "recall_basis": outcome.recall_basis,
+                "recall_limitations": list(outcome.recall_limitations),
+                "reaches_full_recall": outcome.omnex.recall >= 1.0,
             }
         )
     return {
@@ -441,6 +443,17 @@ def _build_prose_artifact(
             "confidence_decay": PROSE_OMNEX_CONFIG.confidence_decay,
         },
         "upper_bound_baseline": {"name": FULL_DUMP, "role": "demoted_upper_bound"},
+        "recall_honesty": (
+            "T0 is the lexical, byte-exact floor: it spends far fewer tokens than the "
+            "full dump at equal recall, but its recall is lexical-only. Where a "
+            "relevant unit shares no vocabulary with the query (the securing-traffic "
+            "page in configure_tls), no T0 budget can surface it -- it is never a "
+            "lexical candidate, so the recall ceiling below 1.0 is a genuine property "
+            "of lexical retrieval, not the floor budget. T0 therefore trails "
+            "embedding-based (chunk-and-embed) retrieval on such queries and makes no "
+            "claim to beat embeddings at T0; the deferred T2 vector lane (Stack G) is what "
+            "closes that recall gap. This family forward-references it, not parity."
+        ),
         "tasks": tasks_json,
         "latency": {
             "omnex_p95_seconds": p95_latency(latencies),
@@ -485,20 +498,25 @@ def main() -> None:
 def run(family: str, out: str, embedder: str) -> None:
     """Run a benchmark family and write its artifact.
 
-    The spec family compares omnex T1 against the chunk-and-embed headline (the
-    ``--embedder`` choice); the prose family compares omnex T0 against the
-    full-dump upper bound at omnex's achieved recall and ignores ``--embedder``.
+    The spec-style family (a single-file corpus) compares omnex T1 against the
+    chunk-and-embed headline (the ``--embedder`` choice); the prose-style family (a
+    directory corpus) compares omnex T0 against the full-dump upper bound at
+    omnex's achieved recall and ignores ``--embedder``. The corpus shape selects
+    the comparison, not the family name.
     """
     loaded = load_family(_resolve_tasks(family))
-    if loaded.name == "prose":
+    if loaded.corpus.is_dir():
         artifact = run_prose_family(loaded)
         path = write_artifact(artifact, Path(out))
         for task in artifact["tasks"]:
             tokens = task["tokens_at_equal_recall"]
+            ceiling = "" if task["reaches_full_recall"] else " (lexical recall ceiling < 1.0)"
+            relation = "<=" if task["omnex_below_full_dump_at_equal_recall"] else ">"
             click.echo(
-                f"{task['id']} @ recall={task['equal_recall']:.2f}: "
-                f"omnex T0 {tokens[OMNEX_T0]} <= full-dump {tokens[FULL_DUMP]} tokens"
+                f"{task['id']} @ recall={task['equal_recall']:.2f}{ceiling}: "
+                f"omnex T0 {tokens[OMNEX_T0]} {relation} full-dump {tokens[FULL_DUMP]} tokens"
             )
+        click.echo(f"\n{artifact['recall_honesty']}")
         click.echo(f"\nartifact: {path}")
         return
     artifact = run_family(loaded, embedder)
