@@ -37,9 +37,15 @@ __all__ = [
     "Tier",
 ]
 
-# Tiers this kernel wires and the determinism class each may claim. T0 is the
-# bounded floor; T1 adds the deterministic reference closure. Both are byte-exact.
-_DETERMINISM_BY_TIER: dict[str, DeterminismClass] = {"T0": "byte_exact", "T1": "byte_exact"}
+# Tiers this kernel wires and the determinism class each may claim. T0/T1 are the
+# byte-exact, model-free floor (T1 adds the deterministic reference closure); T2
+# adds the vector lane and is only pinned-reproducible -- a strictly weaker class --
+# so byte_exact never covers a vector-assisted run.
+_DETERMINISM_BY_TIER: dict[str, DeterminismClass] = {
+    "T0": "byte_exact",
+    "T1": "byte_exact",
+    "T2": "pinned_reproducible",
+}
 
 # Hard reference edge kinds the T1 closure follows transitively to a fixpoint.
 _T1_REF_KINDS: tuple[str, ...] = ("REFERENCES", "FOREIGN_KEY", "IMPORTS", "CALLS")
@@ -227,10 +233,22 @@ class RetrievalKernel:
 
     @staticmethod
     def _reject_unsupported(config: KernelConfig) -> None:
-        if config.enable_vector_lane or config.tier == "T2":
-            raise NotImplementedError(
-                "the T2 vector lane is not implemented in this kernel; "
-                "set enable_vector_lane=False and tier='T0'"
+        """Reject incoherent or unimplemented configs before any work runs.
+
+        The T2 tier and the vector lane are two names for one capability, so they
+        must agree: a T2 tier without the lane would silently run as the lexical
+        floor, and the lane without the T2 tier would let the byte-exact label
+        cover a vector-assisted run. T3 extraction and the rerank lane are not
+        implemented and fail loud rather than degrade.
+        """
+        if config.tier == "T2" and not config.enable_vector_lane:
+            raise ValueError(
+                "tier 'T2' is the vector lane; set enable_vector_lane=True for a T2 run"
+            )
+        if config.enable_vector_lane and config.tier != "T2":
+            raise ValueError(
+                "the vector lane is the T2 tier; set tier='T2' to enable it so the "
+                "receipt never claims byte_exact for a vector-assisted run"
             )
         if config.tier == "T3":
             raise NotImplementedError("T3 model extraction is not implemented in this kernel")

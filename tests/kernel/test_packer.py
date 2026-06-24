@@ -174,10 +174,19 @@ def test_compress_invokes_no_model_or_network(monkeypatch: pytest.MonkeyPatch) -
 # --- guards ---
 
 
-def test_rejects_non_byte_exact_tier() -> None:
+def test_rejects_model_extraction_tier() -> None:
     near = Candidate(_unit("u1", "alpha"), score=1.0, graph_distance=0)
-    with pytest.raises(NotImplementedError, match="model-backed COMPRESS"):
-        pack_efficiently([near], 100, _config("T2"))
+    with pytest.raises(NotImplementedError, match="model-backed extraction"):
+        pack_efficiently([near], 100, _config("T3"))
+
+
+def test_packs_the_t2_vector_tier_deterministically() -> None:
+    # T2 only changes which candidates arrive; packing them is the same
+    # deterministic, model-free chain as the byte-exact tiers.
+    near = Candidate(_unit("u1", "alpha"), score=1.0, graph_distance=0)
+    assert pack_efficiently([near], 100, _config("T2")) == [
+        Representation("u1", "INCLUDE", "alpha", 1)
+    ]
 
 
 def test_rejects_negative_budget() -> None:

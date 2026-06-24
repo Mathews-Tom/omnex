@@ -29,8 +29,10 @@ from omnex.kernel.config import KernelConfig
 
 RepresentationMode = Literal["INCLUDE", "COMPRESS", "ELIDE", "SKIP"]
 
-# Tiers whose COMPRESS is deterministic and model-free.
-_DETERMINISTIC_TIERS = frozenset({"T0", "T1"})
+# Tiers whose packing (including COMPRESS) is deterministic and model-free. The T2
+# vector lane changes only which candidates arrive, never how they are packed, so
+# its packing stays deterministic; T3 model extraction is not packable here.
+_DETERMINISTIC_TIERS = frozenset({"T0", "T1", "T2"})
 
 
 def count_tokens(text: str) -> int:
@@ -119,13 +121,14 @@ def pack_efficiently(
     Each descends INCLUDE -> COMPRESS -> ELIDE -> SKIP until a representation fits
     the remaining budget; a protected unit skips the COMPRESS and ELIDE rungs
     entirely, so it is only ever INCLUDE or SKIP. The emitted total never exceeds
-    ``budget``. ``config.tier`` must be a byte-exact tier (T0/T1); any other tier
-    fails loud, since a model-backed COMPRESS is not implemented here.
+    ``budget``. ``config.tier`` must be a deterministic-packing tier (T0/T1/T2);
+    the T2 vector lane only changes which candidates arrive, so packing stays
+    model-free. T3 model extraction is not packable here and fails loud.
     """
     if config.tier not in _DETERMINISTIC_TIERS:
         raise NotImplementedError(
             f"deterministic packing supports only tiers {sorted(_DETERMINISTIC_TIERS)}; "
-            f"tier {config.tier!r} would require a model-backed COMPRESS"
+            f"tier {config.tier!r} would require model-backed extraction"
         )
     if budget < 0:
         raise ValueError(f"budget must be non-negative, got {budget}")
