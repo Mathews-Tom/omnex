@@ -80,8 +80,10 @@ def test_query_is_byte_identical_on_repeat() -> None:
 
 
 def test_spec_path_makes_no_model_or_network_call(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Warm the deterministic tiktoken tokenizer from its local cache before the
-    # network is blocked; the retrieval path itself must touch no socket.
+    # The no-model guarantee is the receipt assertion below (model_used /
+    # extraction_used). This socket block is a regression guard against
+    # accidental network access; warm the deterministic tiktoken tokenizer from
+    # its local cache first, since the retrieval path itself must touch no socket.
     SpecAdapter().ingest(_PAYMENTS)
 
     def _blocked(*args: object, **kwargs: object) -> socket.socket:
@@ -93,3 +95,15 @@ def test_spec_path_makes_no_model_or_network_call(monkeypatch: pytest.MonkeyPatc
     assert receipt.model_used is False
     assert receipt.extraction_used is False
     assert receipt.reference_closure_complete is True
+
+
+def test_index_sources_builds_a_queryable_kernel() -> None:
+    # The reusable source-level kernel answers identically to the one-shot query
+    # (the receipts differ only in query_sources' full-dump baseline override).
+    config = _t1_config()
+    kernel = omnex.index_sources([_PAYMENTS])
+    reused_bundle, reused_receipt = kernel.retrieve(_QUESTION, 5000, config)
+    one_shot_bundle, _ = omnex.query_sources([_PAYMENTS], _QUESTION, 5000, config)
+    assert reused_bundle.render() == one_shot_bundle.render()
+    assert set(_included_titles(reused_bundle)) >= _CLOSURE
+    assert reused_receipt.reference_closure_complete is True

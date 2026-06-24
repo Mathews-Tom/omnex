@@ -17,7 +17,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from omnex.adapters import select_adapter
-from omnex.ir.types import Reference, Unit, normalize_content
+from omnex.ir.types import Document, Reference, Unit, compute_content_hash, normalize_content
 from omnex.kernel.bundle import ContextBundle
 from omnex.kernel.config import KernelConfig
 from omnex.kernel.kernel import RetrievalKernel
@@ -32,26 +32,48 @@ def index(corpus: Sequence[Unit], references: Sequence[Reference] = ()) -> Retri
     return kernel
 
 
-def _route_sources(sources: Sequence[Path]) -> tuple[list[Unit], list[Reference]]:
+def _route_sources(
+    sources: Sequence[Path],
+) -> tuple[list[Unit], list[Reference], list[Document]]:
     """Route each source through its claiming adapter into shared IR.
 
     For each source the claiming adapter ingests, parses, and links, accumulating
-    the units and reference edges. Failing loud when no adapter claims a source.
+    the units, reference edges, and ingested documents. Fails loud when no
+    adapter claims a source.
     """
     units: list[Unit] = []
     references: list[Reference] = []
+    documents: list[Document] = []
     for source in sources:
         adapter = select_adapter(source)
         document = adapter.ingest(source)
+        documents.append(document)
         document_units = adapter.parse(document)
         units.extend(document_units)
         references.extend(adapter.link(document, document_units))
-    return units, references
+    return units, references, documents
+
+
+def _full_dump_tokens(documents: Sequence[Document]) -> int:
+    """Token count of the whole source(s), the naive paste-everything baseline.
+
+    Counted in the same whitespace ``count_tokens`` ledger as the packed output.
+    The re-read is hash-verified against each document's ``content_hash``, like
+    the rest of the pipeline, so a source that changed since ingest fails loud
+    rather than yielding a baseline that does not match the parsed units.
+    """
+    total = 0
+    for document in documents:
+        text = Path(document.uri).read_text(encoding="utf-8")
+        if compute_content_hash(text) != document.content_hash:
+            raise ValueError(f"source changed since ingest: {document.uri}")
+        total += count_tokens(normalize_content(text))
+    return total
 
 
 def index_sources(sources: Sequence[Path]) -> RetrievalKernel:
     """Build a reusable kernel by routing ``sources`` through their adapters."""
-    units, references = _route_sources(sources)
+    units, references, _ = _route_sources(sources)
     return index(units, references)
 
 
@@ -88,9 +110,7 @@ def query_sources(
     sum-of-units (which double-counts schema text already inside its fields);
     ``reference_closure_complete`` is set by the kernel.
     """
-    units, references = _route_sources(sources)
+    units, references, documents = _route_sources(sources)
     bundle, receipt = query(units, question, budget_tokens, config, references)
-    full_dump = sum(
-        count_tokens(normalize_content(source.read_text(encoding="utf-8"))) for source in sources
-    )
+    full_dump = _full_dump_tokens(documents)
     return bundle, dataclasses.replace(receipt, baseline_tokens=full_dump)
