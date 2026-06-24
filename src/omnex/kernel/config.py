@@ -28,6 +28,22 @@ RecallBasis = Literal["lexical", "lexical_plus_vector"]
 
 
 @dataclass(frozen=True, slots=True)
+class EmbeddingProvenance:
+    """What a pinned-reproducible (T2) run's embeddings depend on for replay.
+
+    A vector-assisted run is reproducible only with the same embedding ``model``,
+    its ``tokenizer``, the inference ``runtime``, and the CPU ``architecture``. The
+    receipt records all four so a reader can replay the run on a matching setup and
+    never mistakes the weaker pinned-reproducible class for the byte-exact floor.
+    """
+
+    model: str
+    tokenizer: str
+    runtime: str
+    architecture: str
+
+
+@dataclass(frozen=True, slots=True)
 class KernelConfig:
     """Configuration selecting kernel behavior for one retrieval run.
 

@@ -23,7 +23,13 @@ from collections.abc import Sequence
 from omnex.ir.graph import Hop, StructureGraph, build_graph
 from omnex.ir.types import Reference, Unit
 from omnex.kernel.bundle import ContextBundle
-from omnex.kernel.config import DeterminismClass, KernelConfig, RecallBasis, Tier
+from omnex.kernel.config import (
+    DeterminismClass,
+    EmbeddingProvenance,
+    KernelConfig,
+    RecallBasis,
+    Tier,
+)
 from omnex.kernel.expand import closure_expand, graph_expand
 from omnex.kernel.fusion import combine
 from omnex.kernel.index import FtsIndex
@@ -146,12 +152,14 @@ class RetrievalKernel:
         vector: list[tuple[str, float]] = []
         recall_basis: RecallBasis = "lexical"
         model_version: str | None = None
+        provenance: EmbeddingProvenance | None = None
         if config.enable_vector_lane:
             lane = self._vector_lane()
             vector = lane.search(query, _VECTOR_CANDIDATE_LIMIT)
             lanes.append([unit_id for unit_id, _ in vector])
             recall_basis = "lexical_plus_vector"
             model_version = lane.model_name
+            provenance = lane.provenance()
         fused = combine(lanes)
         hops, closure_ids = self._expand(fused, config)
 
@@ -178,6 +186,7 @@ class RetrievalKernel:
             determinism_class=_DETERMINISM_BY_TIER[config.tier],
             reference_closure_complete=bool(closure_ids) and closure_ids <= included,
             recall_basis=recall_basis,
+            embedding_provenance=provenance,
         )
         return bundle, receipt
 

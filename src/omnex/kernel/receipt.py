@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from omnex.kernel.config import DeterminismClass, RecallBasis
+from omnex.kernel.config import DeterminismClass, EmbeddingProvenance, RecallBasis
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +36,9 @@ class Receipt:
     rested on -- the lexical lane alone, or the lexical plus vector lane -- so a
     reader never mistakes a lexical-only run for one with semantic recall; the
     plain-language caveats follow from it in :attr:`recall_limitations`.
+    ``embedding_provenance`` is set only on a pinned-reproducible (T2) run and
+    records the model, tokenizer, runtime, and architecture its embeddings depend
+    on; it is None on the byte-exact tiers, which load no model.
     """
 
     returned_tokens: int
@@ -47,6 +50,7 @@ class Receipt:
     determinism_class: DeterminismClass
     reference_closure_complete: bool
     recall_basis: RecallBasis
+    embedding_provenance: EmbeddingProvenance | None = None
 
     @property
     def recall_limitations(self) -> tuple[str, ...]:

@@ -22,10 +22,12 @@ from __future__ import annotations
 
 import importlib.util
 import math
+import platform
 from collections.abc import Iterable, Sequence
 from typing import Any
 
 from omnex.ir.types import Unit
+from omnex.kernel.config import EmbeddingProvenance
 
 # The pinned default embedding model for the T2 lane. Named here -- not imported
 # from the benchmark baseline -- so the product retrieval path stays independent
@@ -87,6 +89,26 @@ class VectorIndex:
     def model_name(self) -> str:
         """The pinned embedding model identity backing this lane."""
         return self._model_name
+
+    def provenance(self) -> EmbeddingProvenance:
+        """Describe what this lane's embeddings depend on for replay.
+
+        Records the pinned model and its bundled tokenizer (a fastembed model ships
+        the tokenizer with the weights, so they share one pinned identity), the
+        inference runtime (fastembed and its ONNX runtime), and the CPU
+        architecture -- the inputs a pinned-reproducible T2 run reproduces only when
+        matched. Imports the optional dependencies here because provenance is read
+        only on the T2 path, where they are installed.
+        """
+        import fastembed
+        import onnxruntime
+
+        return EmbeddingProvenance(
+            model=self._model_name,
+            tokenizer=self._model_name,
+            runtime=f"fastembed=={fastembed.__version__}; onnxruntime=={onnxruntime.__version__}",
+            architecture=f"{platform.system()}/{platform.machine()}",
+        )
 
     def _embedder(self) -> Any:
         """Load the pinned ``fastembed`` model once, failing loud when absent."""
