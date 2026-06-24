@@ -30,9 +30,12 @@ from __future__ import annotations
 import math
 import re
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Sequence, Set
+from dataclasses import dataclass
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Protocol
+
+from omnex.bench.metrics import covered_labels, recall
 
 if TYPE_CHECKING:
     import tiktoken
@@ -210,3 +213,52 @@ def chunk_and_embed_baseline(
         key=lambda index: (-_cosine(query_vector, chunk_vectors[index]), index),
     )
     return [chunks[index] for index in order]
+
+
+@dataclass(frozen=True, slots=True)
+class ChunkEmbedConfig:
+    """The pinned chunk-and-embed configuration, recorded verbatim in the artifact.
+
+    ``chunk_tokens``/``chunk_overlap`` size the token windows; ``embedder`` names
+    the pinned model; ``rerank`` names an optional cross-encoder reranker and is
+    ``None`` in v0 (the headline does not depend on reranking, so it stays off and
+    out of the determinism surface). Pinning these and recording them is what
+    makes the headline number defensible rather than self-graded.
+    """
+
+    chunk_tokens: int = 256
+    chunk_overlap: int = 32
+    embedder: str = _PINNED_EMBED_MODEL
+    rerank: str | None = None
+
+
+# The single pinned strong configuration the headline artifact is generated with.
+PINNED_CHUNK_EMBED = ChunkEmbedConfig()
+
+
+def chunks_for_recall(
+    ranked: Sequence[str],
+    labels: Set[str],
+    target_recall: float,
+) -> list[str]:
+    """Shortest ranked prefix whose cumulative text reaches ``target_recall``.
+
+    Walks ``ranked`` accumulating text and the gold ``labels`` covered so far, and
+    returns the shortest prefix whose recall reaches ``target_recall``; returns the
+    whole ranking when the target is never reached (the caller checks the achieved
+    prefix, so the baseline's recall is tunable to a target. It exists to
+    demonstrate that tunability (it is exercised by the baseline tests); the runner
+    grades on the token axis via ``tokens_at_recall`` and does not call this.
+    """
+    if not 0.0 <= target_recall <= 1.0:
+        raise ValueError(f"target_recall must be in [0.0, 1.0], got {target_recall}")
+    if recall(frozenset(), labels) >= target_recall:
+        return []
+    cumulative = ""
+    prefix: list[str] = []
+    for text in ranked:
+        prefix.append(text)
+        cumulative += "\n" + text
+        if recall(covered_labels(cumulative, labels), labels) >= target_recall:
+            return prefix
+    return prefix

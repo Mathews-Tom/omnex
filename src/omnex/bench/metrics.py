@@ -35,6 +35,17 @@ class RetrievedItem:
     covered: frozenset[str]
 
 
+def covered_labels(text: str, labels: Set[str]) -> frozenset[str]:
+    """Labels whose identifying marker appears verbatim in ``text``.
+
+    A gold label *is* its marker: the distinctive substring identifying the
+    relevant unit's definition in the corpus. A retrieval covers the label when
+    that marker appears in its text. The runner grades every retrieval path
+    through this one function, so omnex and the baselines are scored identically.
+    """
+    return frozenset(label for label in labels if label in text)
+
+
 def recall(retrieved: Set[str], relevant: Set[str]) -> float:
     """Fraction of ``relevant`` labels present in ``retrieved``.
 
