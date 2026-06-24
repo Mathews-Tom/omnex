@@ -15,6 +15,7 @@ from omnex.bench.metrics import (
     recall,
     tokens_at_recall,
 )
+from omnex.bench.report import Comparison, PathResult, render, render_report, verdict
 
 _ABC = frozenset({"a", "b", "c"})
 
@@ -46,6 +47,12 @@ def test_tokens_at_recall_ignores_irrelevant_coverage() -> None:
 def test_tokens_at_recall_zero_target_costs_nothing() -> None:
     results = _items((10, {"a"}))
     assert tokens_at_recall(results, _ABC, 0.0) == 0
+
+
+def test_tokens_at_recall_zero_target_on_empty_ranking_is_zero() -> None:
+    # The pre-loop guard returns before consuming any item, so a zero target
+    # costs nothing even with nothing to retrieve.
+    assert tokens_at_recall([], _ABC, 0.0) == 0
 
 
 def test_tokens_at_recall_returns_none_when_recall_unreached() -> None:
@@ -130,3 +137,68 @@ def test_p95_latency_rejects_empty() -> None:
 def test_full_dump_baseline_is_the_whole_corpus_in_one_passage() -> None:
     passages = full_dump_baseline(["alpha beta", "gamma"])
     assert passages == ["alpha beta\ngamma"]
+
+
+def test_report_demotes_upper_bound_and_reports_delta_only_at_equal_recall() -> None:
+    comparison = Comparison(
+        task="create_payment",
+        recall_target=1.0,
+        subject=PathResult("omnex T1", 210),
+        headline=PathResult("chunk-and-embed", 917),
+        upper_bound=PathResult("full-dump", 938),
+    )
+    text = render(comparison)
+    assert "upper bound (demoted)  full-dump" in text
+    assert "omnex T1 210 <= chunk-and-embed 917" in verdict(comparison)
+
+
+def test_report_marks_pending_headline_and_refuses_a_delta() -> None:
+    comparison = Comparison(
+        task="create_payment",
+        recall_target=1.0,
+        subject=PathResult("omnex T1", 210),
+        headline=PathResult("chunk-and-embed", None, available=False),
+        upper_bound=PathResult("full-dump", 938),
+    )
+    assert "pending" in render(comparison)
+    assert "no equal-recall delta yet" in verdict(comparison)
+
+
+def test_report_refuses_a_delta_when_a_path_is_unreached() -> None:
+    comparison = Comparison(
+        task="dispatch_shipment",
+        recall_target=1.0,
+        subject=PathResult("omnex T1", 259),
+        headline=PathResult("chunk-and-embed", None),  # available but unreached
+        upper_bound=PathResult("full-dump", 938),
+    )
+    assert "unreached at this recall" in render(comparison)
+    assert "no equal-recall delta" in verdict(comparison)
+
+
+def test_report_states_a_loss_when_subject_spends_more_than_headline() -> None:
+    # The honesty property must surface a loss, not silently render "<=".
+    comparison = Comparison(
+        task="coherent_closure",
+        recall_target=1.0,
+        subject=PathResult("omnex T1", 1000),
+        headline=PathResult("chunk-and-embed", 917),
+        upper_bound=PathResult("full-dump", 938),
+    )
+    line = verdict(comparison)
+    assert "omnex T1 1000 > chunk-and-embed 917" in line
+    assert "(1.09x of headline)" in line
+
+
+def test_render_report_underlines_the_title_and_separates_blocks() -> None:
+    comparison = Comparison(
+        task="create_payment",
+        recall_target=1.0,
+        subject=PathResult("omnex T1", 210),
+        headline=PathResult("chunk-and-embed", 917),
+        upper_bound=PathResult("full-dump", 938),
+    )
+    text = render_report("Spec family", [comparison])
+    # The underline sits directly beneath the title (no blank line between them).
+    assert text.startswith("Spec family\n===========\n\n")
+    assert render(comparison) in text
