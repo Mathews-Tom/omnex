@@ -1,0 +1,498 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Commerce & Logistics API",
+    "version": "3.1.0"
+  },
+  "paths": {
+    "/payments": {
+      "post": {
+        "summary": "Create a payment",
+        "description": "Creating a payment: submit the charge request and read the stored response.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymentRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Payment"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/shipments": {
+      "post": {
+        "summary": "Dispatch a shipment",
+        "description": "Dispatching a shipment: hand a parcel to a carrier and read the manifest.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShipmentRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Shipment"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/subscriptions": {
+      "post": {
+        "summary": "Enroll a subscriber",
+        "description": "Enrolling a subscriber: begin a recurring plan and read the enrollment.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubscriptionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Subscription"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/invoices": {
+      "post": {
+        "summary": "Draft an invoice",
+        "description": "Drafting a statement for later settlement.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvoiceDraft"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Invoice"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/refunds": {
+      "post": {
+        "summary": "Reverse a charge",
+        "description": "Reversing a captured charge back to its origin.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefundOrder"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refund"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/coupons": {
+      "get": {
+        "summary": "List promotions",
+        "description": "Returning active promotional codes.",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Coupon"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/webhooks": {
+      "put": {
+        "summary": "Register a callback",
+        "description": "Storing an endpoint to notify on activity.",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Webhook"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/status": {
+      "get": {
+        "summary": "Probe liveness",
+        "description": "Surfacing the current service state.",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Address": {
+        "type": "object",
+        "description": "A postal location.",
+        "properties": {
+          "street": {
+            "type": "string"
+          },
+          "city": {
+            "type": "string"
+          },
+          "postalCode": {
+            "type": "string"
+          }
+        }
+      },
+      "Carrier": {
+        "type": "object",
+        "description": "A delivery company.",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "scac": {
+            "type": "string"
+          }
+        }
+      },
+      "Coupon": {
+        "type": "object",
+        "description": "A promotional code.",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "percentOff": {
+            "type": "number"
+          }
+        }
+      },
+      "Customer": {
+        "type": "object",
+        "description": "A buyer.",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "billingAddress": {
+            "$ref": "#/components/schemas/Address"
+          }
+        }
+      },
+      "Dimensions": {
+        "type": "object",
+        "description": "Bounding measurements.",
+        "properties": {
+          "lengthCm": {
+            "type": "number"
+          },
+          "widthCm": {
+            "type": "number"
+          },
+          "heightCm": {
+            "type": "number"
+          }
+        }
+      },
+      "Discount": {
+        "type": "object",
+        "description": "An applied reduction.",
+        "properties": {
+          "coupon": {
+            "$ref": "#/components/schemas/Coupon"
+          },
+          "amount": {
+            "$ref": "#/components/schemas/Money"
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "description": "Failure detail.",
+        "properties": {
+          "code": {
+            "type": "integer"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "Event": {
+        "type": "object",
+        "description": "A notification envelope.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          }
+        }
+      },
+      "HealthStatus": {
+        "type": "object",
+        "description": "Service health.",
+        "properties": {
+          "state": {
+            "type": "string"
+          }
+        }
+      },
+      "Invoice": {
+        "type": "object",
+        "description": "A settled statement.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "total": {
+            "$ref": "#/components/schemas/Money"
+          }
+        }
+      },
+      "InvoiceDraft": {
+        "type": "object",
+        "description": "A statement under preparation.",
+        "properties": {
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LineItem"
+            }
+          }
+        }
+      },
+      "LineItem": {
+        "type": "object",
+        "description": "One statement line.",
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "price": {
+            "$ref": "#/components/schemas/Money"
+          }
+        }
+      },
+      "Money": {
+        "type": "object",
+        "description": "A monetary value.",
+        "properties": {
+          "amount": {
+            "type": "number"
+          },
+          "currency": {
+            "type": "string"
+          }
+        }
+      },
+      "Package": {
+        "type": "object",
+        "description": "A physical parcel.",
+        "properties": {
+          "dimensions": {
+            "$ref": "#/components/schemas/Dimensions"
+          },
+          "weight": {
+            "$ref": "#/components/schemas/Weight"
+          }
+        }
+      },
+      "Payment": {
+        "type": "object",
+        "description": "Stored charge record.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "amount": {
+            "$ref": "#/components/schemas/Money"
+          }
+        }
+      },
+      "PaymentRequest": {
+        "type": "object",
+        "description": "Inbound charge details.",
+        "properties": {
+          "idempotencyKey": {
+            "type": "string"
+          },
+          "amount": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "customer": {
+            "$ref": "#/components/schemas/Customer"
+          }
+        }
+      },
+      "Refund": {
+        "type": "object",
+        "description": "A reversed charge record.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "amount": {
+            "$ref": "#/components/schemas/Money"
+          }
+        }
+      },
+      "RefundOrder": {
+        "type": "object",
+        "description": "Reversal instructions.",
+        "properties": {
+          "paymentId": {
+            "type": "string"
+          },
+          "amount": {
+            "$ref": "#/components/schemas/Money"
+          }
+        }
+      },
+      "Shipment": {
+        "type": "object",
+        "description": "A dispatched parcel manifest.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "carrier": {
+            "$ref": "#/components/schemas/Carrier"
+          }
+        }
+      },
+      "ShipmentRequest": {
+        "type": "object",
+        "description": "Outbound parcel details.",
+        "properties": {
+          "package": {
+            "$ref": "#/components/schemas/Package"
+          },
+          "destination": {
+            "$ref": "#/components/schemas/Address"
+          }
+        }
+      },
+      "Subscription": {
+        "type": "object",
+        "description": "A recurring plan enrollment.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "price": {
+            "$ref": "#/components/schemas/Money"
+          }
+        }
+      },
+      "SubscriptionRequest": {
+        "type": "object",
+        "description": "Enrollment details.",
+        "properties": {
+          "customer": {
+            "$ref": "#/components/schemas/Customer"
+          },
+          "price": {
+            "$ref": "#/components/schemas/Money"
+          }
+        }
+      },
+      "Webhook": {
+        "type": "object",
+        "description": "A registered endpoint.",
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "event": {
+            "$ref": "#/components/schemas/Event"
+          }
+        }
+      },
+      "Weight": {
+        "type": "object",
+        "description": "A mass measurement.",
+        "properties": {
+          "grams": {
+            "type": "number"
+          }
+        }
+      }
+    }
+  }
+}
