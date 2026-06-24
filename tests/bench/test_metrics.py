@@ -6,6 +6,7 @@ equal in every token comparison, and prove the computation is deterministic.
 
 from __future__ import annotations
 
+from omnex.bench.baselines import full_dump_baseline
 from omnex.bench.metrics import (
     RetrievedItem,
     f1,
@@ -124,3 +125,8 @@ def test_p95_latency_rejects_empty() -> None:
     except ValueError:
         return
     raise AssertionError("expected ValueError for empty latencies")
+
+
+def test_full_dump_baseline_is_the_whole_corpus_in_one_passage() -> None:
+    passages = full_dump_baseline(["alpha beta", "gamma"])
+    assert passages == ["alpha beta\ngamma"]
