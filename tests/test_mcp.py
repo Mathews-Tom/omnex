@@ -144,3 +144,23 @@ def test_main_runs_server_over_stdio(monkeypatch: pytest.MonkeyPatch) -> None:
     main()
     # The stdio entry point runs the server once with its default (stdio) transport.
     assert calls == [()]
+
+
+def test_query_tool_fails_loud_on_missing_path(tmp_path: Path) -> None:
+    # A missing path fails loud with a clear message on the MCP surface too,
+    # matching the CLI's up-front existence check rather than a misleading
+    # "no adapter claims source" or a raw OSError.
+    missing = tmp_path / "absent.json"
+    with pytest.raises(Exception) as excinfo:
+        asyncio.run(
+            server.call_tool("query", {"corpus": str(missing), "question": "q", "budget": 100})
+        )
+    assert "path does not exist" in str(excinfo.value)
+
+
+def test_index_tool_fails_loud_on_empty_directory(tmp_path: Path) -> None:
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    with pytest.raises(Exception) as excinfo:
+        asyncio.run(server.call_tool("index", {"paths": [str(empty)]}))
+    assert "corpus is empty" in str(excinfo.value)

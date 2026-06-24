@@ -188,3 +188,11 @@ def test_collect_files_skips_hidden_entries_and_sorts() -> None:
         # Hidden files and files under hidden directories are skipped; the rest
         # are returned in sorted order so routing is deterministic.
         assert collect_files([base]) == [base / "a.md", base / "b.md"]
+
+
+def test_index_empty_directory_fails_loud(tmp_path: Path) -> None:
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    result = CliRunner().invoke(main, ["index", str(empty)])
+    assert result.exit_code != 0
+    assert "corpus is empty" in result.output
