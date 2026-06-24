@@ -21,7 +21,7 @@ Adapters depend on the kernel and IR, never the reverse.
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 from hashlib import sha256
@@ -57,8 +57,10 @@ _HTTP_METHODS: frozenset[str] = frozenset(
 def _encoder() -> tiktoken.Encoding:
     """Load the deterministic offline ``tiktoken`` encoder once and cache it.
 
-    The import and load are deferred to first use so importing this module (and
-    ``omnex``) stays cheap and free of any download attempt.
+    The import and load are deferred to first use, so importing this module (and
+    ``omnex``) is cheap; the cl100k_base vocab is loaded from the local tiktoken
+    cache on first use. The retrieval path never touches it (it budgets in the
+    kernel's whitespace ``count_tokens``); only ``raw_token_count`` uses it.
     """
     import tiktoken
 
@@ -81,15 +83,24 @@ def _unit_id(document_id: str, pointer: str) -> str:
     return f"unit:{sha256(body).hexdigest()[:16]}"
 
 
-def _flavor_of_value(data: object) -> str | None:
-    """Classify a decoded JSON value as ``openapi``, ``jsonschema``, or unknown."""
-    if not isinstance(data, dict):
+def _classify(has_key: Callable[[str], bool]) -> str | None:
+    """Classify a spec by its top-level keys (the one detection predicate).
+
+    Shared by ``claims`` (over a decoded dict) and parsing (over a parsed node),
+    so detection never drifts between the two. Swagger 2.0 is out of scope and is
+    rejected here rather than partially parsed, so a ``swagger`` document is never
+    claimed.
+    """
+    if has_key("swagger"):
         return None
-    if "openapi" in data or "swagger" in data:
+    if has_key("openapi"):
         return "openapi"
-    if "$schema" in data or "$defs" in data or "definitions" in data:
-        return "jsonschema"
-    if "type" in data and "properties" in data:
+    if (
+        has_key("$schema")
+        or has_key("$defs")
+        or has_key("definitions")
+        or (has_key("type") and has_key("properties"))
+    ):
         return "jsonschema"
     return None
 
@@ -173,6 +184,7 @@ class _SpanParser:
         start = self._i
         self._i += 1
         members: list[tuple[str, _JsonNode]] = []
+        seen: set[str] = set()
         self._ws()
         if self._i < self._n and self._s[self._i] == "}":
             self._i += 1
@@ -182,6 +194,9 @@ class _SpanParser:
             if self._i >= self._n or self._s[self._i] != '"':
                 raise ValueError(f"expected object key at offset {self._i}")
             key = self._string_value()
+            if key in seen:
+                raise ValueError(f"duplicate object key {key!r} at offset {self._i}")
+            seen.add(key)
             self._ws()
             if self._i >= self._n or self._s[self._i] != ":":
                 raise ValueError(f"expected ':' at offset {self._i}")
@@ -301,8 +316,12 @@ def _collect_operations(paths: _JsonNode, source: str, units: list[_UnitNode]) -
 
 
 def _is_reference_property(value: _JsonNode) -> bool:
-    """True when a property value is a bare ``$ref`` (no inline shape of its own)."""
-    return value.is_object and value.get("$ref") is not None
+    """True when a property value is exactly a ``$ref`` (no inline shape of its own).
+
+    A ``$ref`` carrying sibling keys has inline content of its own, so it is kept
+    as a FIELD; only a sole-member ``$ref`` is treated as a pure schema edge.
+    """
+    return value.members is not None and len(value.members) == 1 and value.get("$ref") is not None
 
 
 def _collect_fields(
@@ -388,7 +407,9 @@ class SpecAdapter:
             data = json.loads(text)
         except ValueError:
             return False
-        return _flavor_of_value(data) is not None
+        if not isinstance(data, dict):
+            return False
+        return _classify(data.__contains__) is not None
 
     def ingest(self, source: Path) -> Document:
         """Establish document identity, content hash, and raw token count."""
@@ -465,19 +486,10 @@ class SpecAdapter:
 
 
 def _flavor_node(root: _JsonNode) -> str | None:
-    """Classify a parsed root node as ``openapi``, ``jsonschema``, or unknown."""
+    """Classify a parsed root node, reusing the shared detection predicate."""
     if not root.is_object:
         return None
-    if root.get("openapi") is not None or root.get("swagger") is not None:
-        return "openapi"
-    if (
-        root.get("$schema") is not None
-        or root.get("$defs") is not None
-        or root.get("definitions") is not None
-        or (root.get("type") is not None and root.get("properties") is not None)
-    ):
-        return "jsonschema"
-    return None
+    return _classify(lambda key: root.get(key) is not None)
 
 
 def _read_source(document: Document) -> str:
