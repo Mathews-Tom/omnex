@@ -67,6 +67,7 @@ Flavor = Literal["markdown", "rest"]
 _ATX_RE = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]+.*?)?(?:[ \t]+#+)?[ \t]*$")
 _FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 _SETEXT_RE = re.compile(r"^ {0,3}(=+|-+)[ \t]*$")
+_THEMATIC_BREAK_RE = re.compile(r"^ {0,3}([-*_])[ \t]*(?:\1[ \t]*){2,}$")
 _TABLE_DELIM_RE = re.compile(r"^ {0,3}\|?[ \t]*:?-+:?[ \t]*(\|[ \t]*:?-+:?[ \t]*)+\|?[ \t]*$")
 _IMAGE_ONLY_RE = re.compile(r"^!\[[^\]]*\]\([^)]*\)$")
 
@@ -177,6 +178,12 @@ def _parse_markdown(source: str) -> list[_Block]:
         if not line.strip():
             index += 1
             continue
+        if _THEMATIC_BREAK_RE.match(line):
+            # A thematic break (horizontal rule) carries no content: emit no unit.
+            # A paragraph followed by such a line is handled as a setext heading
+            # below, so reaching one here means it stands alone.
+            index += 1
+            continue
         fence = _FENCE_OPEN_RE.match(line)
         if fence:
             marker = fence.group(1)
@@ -195,37 +202,45 @@ def _parse_markdown(source: str) -> list[_Block]:
             blocks.append(_Block("HEADING", level, start, content_end, _atx_title(line)))
             index += 1
             continue
-        if index + 1 < len(lines):
-            under = source[lines[index + 1][0] : lines[index + 1][1]]
-            if _SETEXT_RE.match(under) and "|" not in line:
-                level = 1 if under.strip()[0] == "=" else 2
-                blocks.append(_Block("HEADING", level, start, content_end, line.strip()))
-                index += 2
-                continue
-            if "|" in line and _TABLE_DELIM_RE.match(under):
-                block_end = lines[index + 1][2]
-                index += 2
-                while index < len(lines):
-                    row_start, row_end, row_raw = lines[index]
-                    row = source[row_start:row_end]
-                    if "|" not in row or not row.strip():
-                        break
-                    block_end = row_raw
-                    index += 1
-                blocks.append(_Block("TABLE", 0, start, block_end, None))
-                continue
+        if (
+            "|" in line
+            and index + 1 < len(lines)
+            and _TABLE_DELIM_RE.match(source[lines[index + 1][0] : lines[index + 1][1]])
+        ):
+            block_end = lines[index + 1][2]
+            index += 2
+            while index < len(lines):
+                row_start, row_end, row_raw = lines[index]
+                row = source[row_start:row_end]
+                if "|" not in row or not row.strip():
+                    break
+                block_end = row_raw
+                index += 1
+            blocks.append(_Block("TABLE", 0, start, block_end, None))
+            continue
         para_end = content_end
         index += 1
+        setext_level = 0
         while index < len(lines):
             next_start, next_end, _ = lines[index]
             nxt = source[next_start:next_end]
             if not nxt.strip() or _ATX_RE.match(nxt) or _FENCE_OPEN_RE.match(nxt):
                 break
             if _SETEXT_RE.match(nxt):
+                # A paragraph underlined by = or - is a setext heading; it wins
+                # over a thematic break per CommonMark.
+                setext_level = 1 if nxt.strip()[0] == "=" else 2
+                break
+            if _THEMATIC_BREAK_RE.match(nxt):
                 break
             para_end = next_end
             index += 1
-        text = source[start:para_end].strip()
+        block_text = source[start:para_end]
+        if setext_level and "|" not in block_text:
+            blocks.append(_Block("HEADING", setext_level, start, para_end, block_text.strip()))
+            index += 1
+            continue
+        text = block_text.strip()
         kind: BlockKind = "FIGURE" if _IMAGE_ONLY_RE.match(text) else "PARAGRAPH"
         blocks.append(_Block(kind, 0, start, para_end, None))
     return blocks

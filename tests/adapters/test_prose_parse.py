@@ -175,6 +175,50 @@ def test_long_section_splits_on_boundaries_within_budget(tmp_path: Path) -> None
     assert rejoined == " ".join(body.split())
 
 
+def test_single_over_budget_word_is_emitted_whole(tmp_path: Path) -> None:
+    encode = _encoder().encode
+    word = "x" * 6000
+    assert len(encode(word)) > _SECTION_TOKEN_BUDGET, "fixture must exceed the budget"
+    _, _, units = _parsed(tmp_path, "word.md", f"# W\n\n{word}\n")
+    pieces = [unit for unit in units if unit.kind == "PARAGRAPH"]
+    # A single contiguous run wider than the budget is never cut mid-token.
+    assert len(pieces) == 1
+    assert pieces[0].text == word
+
+
+def test_thematic_break_emits_no_unit(tmp_path: Path) -> None:
+    _, _, units = _parsed(tmp_path, "rule.md", "# H\n\nfirst\n\n---\n\nsecond\n")
+    assert not any(unit.text.strip() in {"---", "***", "___"} for unit in units)
+    paragraphs = [unit.text for unit in units if unit.kind == "PARAGRAPH"]
+    assert paragraphs == ["first", "second"]
+
+
+def test_setext_headings_become_sections(tmp_path: Path) -> None:
+    # Single-line and multi-line setext, plus a paragraph underlined by '-'
+    # (a setext heading per CommonMark, not a thematic break).
+    _, _, single = _parsed(tmp_path, "s1.md", "Title One\n=========\n\nbody\n")
+    assert [u.title for u in single if u.kind == "SECTION"] == ["Title One"]
+    _, _, multi = _parsed(tmp_path, "s2.md", "Line A\nLine B\n======\n\nbody\n")
+    sections = [u for u in multi if u.kind == "SECTION"]
+    assert [u.title for u in sections] == ["Line A\nLine B"]
+    assert not any(u.text.strip() == "======" for u in multi)
+    _, _, dash = _parsed(tmp_path, "s3.md", "Subhead\n---\n\nbody\n")
+    assert [u.title for u in dash if u.kind == "SECTION"] == ["Subhead"]
+
+
+def test_content_before_first_heading_has_empty_breadcrumb(tmp_path: Path) -> None:
+    _, _, units = _parsed(tmp_path, "pre.md", "intro before any heading\n\n# First\n\nbody\n")
+    assert units[0].kind == "PARAGRAPH"
+    assert units[0].breadcrumb == ()
+
+
+def test_unterminated_fence_runs_to_eof_as_one_protected_unit(tmp_path: Path) -> None:
+    _, _, units = _parsed(tmp_path, "open.md", "# C\n\n```yaml\nkey: value\nstill open\n")
+    protected = [unit for unit in units if unit.protect]
+    assert len(protected) == 1
+    assert protected[0].text.startswith("```yaml")
+
+
 def test_protected_block_is_never_split(tmp_path: Path) -> None:
     line = "tls.crt: a-very-long-base64-looking-value-repeated-many-times "
     fenced = "```yaml\n" + (line * 60) + "\n```"
