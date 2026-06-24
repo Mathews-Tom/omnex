@@ -55,14 +55,14 @@ class Receipt:
         For a lexical-only run these state that recall is lexical, so a
         semantically distant unit can be missed unless a structural edge such as
         CROSS_REF reaches it, and that lexical recall trails embedding-based
-        retrieval on prose with vocabulary mismatch. An empty tuple means no
-        recall caveat applies (the vector lane contributed semantic recall).
+        retrieval where query and content vocabulary diverge. An empty tuple means
+        no recall caveat applies (the vector lane contributed semantic recall).
         """
         if self.recall_basis == "lexical":
             return (
                 "Recall is lexical-only: a semantically distant unit can be missed "
                 "unless a structural edge such as CROSS_REF reaches it.",
-                "Lexical recall trails embedding-based retrieval on prose with "
-                "vocabulary mismatch; this run makes no claim to beat embeddings.",
+                "Lexical recall trails embedding-based retrieval where query and "
+                "content vocabulary diverge; this run makes no claim to beat embeddings.",
             )
         return ()
