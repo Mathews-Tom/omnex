@@ -29,13 +29,19 @@ def _named_edges(units: list[Unit], references: list[Reference]) -> set[tuple[st
 
 def test_payments_reproduces_the_design_graph() -> None:
     units, references = _linked(_PAYMENTS)
-    edges = _named_edges(units, references)
-    assert ("POST /payments", "REFERENCES", "PaymentRequest") in edges
-    assert ("POST /payments", "REFERENCES", "Payment") in edges
-    assert ("PaymentRequest", "REFERENCES", "Money") in edges
-    assert ("PaymentRequest", "REFERENCES", "Customer") in edges
-    assert ("Customer", "REFERENCES", "Address") in edges
-    assert ("Payment", "REFERENCES", "Money") in edges
+    # The exact edge set is pinned so a mis-attributed source, a dropped edge, or
+    # a spurious edge fails the test. The fixture's GET /health -> HealthStatus is
+    # a real edge alongside the six Example-A payment edges.
+    assert _named_edges(units, references) == {
+        ("POST /payments", "REFERENCES", "PaymentRequest"),
+        ("POST /payments", "REFERENCES", "Payment"),
+        ("PaymentRequest", "REFERENCES", "Money"),
+        ("PaymentRequest", "REFERENCES", "Customer"),
+        ("Customer", "REFERENCES", "Address"),
+        ("Payment", "REFERENCES", "Money"),
+        ("GET /health", "REFERENCES", "HealthStatus"),
+    }
+    assert len(references) == 7
 
 
 def test_payments_edges_are_confident_references() -> None:
@@ -151,3 +157,20 @@ def test_link_rejects_mismatched_units() -> None:
 def test_capabilities_report_reference_kinds() -> None:
     caps = SpecAdapter().capabilities()
     assert {"REFERENCES", "FOREIGN_KEY"} <= caps.reference_kinds
+
+
+def test_non_unit_internal_target_is_skipped(tmp_path: Path) -> None:
+    # A $ref to a real but non-unit node (an OpenAPI parameter) is out of scope
+    # and skipped, not treated as dangling; the schema ref still links.
+    spec = tmp_path / "params.json"
+    spec.write_text(
+        '{"openapi": "3.1.0", "paths": {"/x": {"get": {"parameters": '
+        '[{"$ref": "#/components/parameters/P"}], "responses": {"200": '
+        '{"description": "ok", "content": {"application/json": {"schema": '
+        '{"$ref": "#/components/schemas/B"}}}}}}}}, "components": {"parameters": '
+        '{"P": {"name": "p", "in": "query"}}, "schemas": {"B": {"type": "object", '
+        '"properties": {"n": {"type": "string"}}}}}}',
+        encoding="utf-8",
+    )
+    units, references = _linked(spec)
+    assert _named_edges(units, references) == {("GET /x", "REFERENCES", "B")}
