@@ -28,6 +28,9 @@ dependencies = [
 [project.optional-dependencies]
 embed = ["fastembed>=0.3"]
 mcp = ["mcp>=1.0"]
+# Benchmark-only dependencies (chunk-and-embed baseline). Never required by the
+# product; the embedding model is a benchmark dependency, not omnex's retrieval path.
+bench = ["omnex[embed]"]
 
 [project.scripts]
 omnex = "omnex.cli:main"
@@ -70,7 +73,7 @@ warn_unused_configs = true
 files = ["src/omnex", "tests"]
 
 [[tool.mypy.overrides]]
-module = ["networkx.*"]
+module = ["networkx.*", "fastembed.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

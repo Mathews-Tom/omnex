@@ -813,6 +813,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+bench = [
+    { name = "fastembed" },
+]
 embed = [
     { name = "fastembed" },
 ]
@@ -831,12 +834,13 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "click", specifier = ">=8.1" },
+    { name = "fastembed", marker = "extra == 'bench'", specifier = ">=0.3" },
     { name = "fastembed", marker = "extra == 'embed'", specifier = ">=0.3" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.0" },
     { name = "networkx", specifier = ">=3.0" },
     { name = "tiktoken", specifier = ">=0.7" },
 ]
-provides-extras = ["embed", "mcp"]
+provides-extras = ["bench", "embed", "mcp"]
 
 [package.metadata.requires-dev]
 dev = [
