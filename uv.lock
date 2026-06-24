@@ -822,6 +822,7 @@ mcp = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "mcp" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "ruff" },
@@ -839,6 +840,7 @@ provides-extras = ["embed", "mcp"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "mcp", specifier = ">=1.0" },
     { name = "mypy", specifier = ">=1.10" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "ruff", specifier = ">=0.6" },

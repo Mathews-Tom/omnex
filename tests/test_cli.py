@@ -16,7 +16,8 @@ from click.testing import CliRunner, Result
 
 import omnex
 from omnex import api
-from omnex.cli import _collect_files, _render_markdown, default_config, main
+from omnex._surface import collect_files, default_config
+from omnex.cli import _render_markdown, main
 
 _FIXTURES = Path(__file__).resolve().parent / "fixtures"
 _PAYMENTS = _FIXTURES / "payments_openapi.json"
@@ -186,4 +187,12 @@ def test_collect_files_skips_hidden_entries_and_sorts() -> None:
         (base / "a.md").write_text("# A\n")
         # Hidden files and files under hidden directories are skipped; the rest
         # are returned in sorted order so routing is deterministic.
-        assert _collect_files([base]) == [base / "a.md", base / "b.md"]
+        assert collect_files([base]) == [base / "a.md", base / "b.md"]
+
+
+def test_index_empty_directory_fails_loud(tmp_path: Path) -> None:
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    result = CliRunner().invoke(main, ["index", str(empty)])
+    assert result.exit_code != 0
+    assert "corpus is empty" in result.output
