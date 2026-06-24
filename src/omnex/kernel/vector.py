@@ -20,6 +20,7 @@ without the extra installed fails loud with an actionable message.
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import math
 import platform
@@ -52,6 +53,18 @@ def vector_lane_available() -> bool:
     return importlib.util.find_spec("fastembed") is not None
 
 
+def embedding_cache_key(text: str, model_version: str) -> str:
+    """Content-addressed cache key for one embedding: content hash + model version.
+
+    Both components are load-bearing. The content hash lets identical text reuse a
+    single embedding (across units and across repeated queries); the model version
+    scopes the cache to one pinned model, since the same text embeds differently
+    under a different model. The text is hashed, never stored, so the key is bounded.
+    """
+    content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return f"{model_version}\n{content_hash}"
+
+
 def _cosine(left: Sequence[float], right: Sequence[float]) -> float:
     """Cosine similarity of two equal-length dense vectors; 0.0 if either is zero."""
     dot = math.fsum(a * b for a, b in zip(left, right, strict=True))
@@ -77,13 +90,16 @@ class VectorIndex:
     and importing this module never require ``fastembed``.
     """
 
-    __slots__ = ("_model", "_model_name", "_unit_ids", "_vectors")
+    __slots__ = ("_cache", "_model", "_model_name", "_unit_ids", "_vectors")
 
     def __init__(self, model_name: str = DEFAULT_EMBED_MODEL) -> None:
         self._model_name = model_name
         self._model: Any = None
         self._unit_ids: list[str] = []
         self._vectors: list[list[float]] = []
+        # Content-addressed embedding cache keyed by content hash + model version,
+        # reused for both unit and query embeddings within this index's lifetime.
+        self._cache: dict[str, list[float]] = {}
 
     @property
     def model_name(self) -> str:
@@ -125,16 +141,32 @@ class VectorIndex:
         model = self._embedder()
         return [[float(value) for value in vector] for vector in model.embed(list(texts))]
 
+    def _embed_cached(self, texts: Sequence[str]) -> list[list[float]]:
+        """Embed ``texts`` through the content-addressed cache, in input order.
+
+        Only texts not already cached are embedded, in a single batch, so identical
+        text (a duplicate unit, or a repeated query) is embedded at most once and
+        the model is loaded only when there is something new to embed.
+        """
+        keys = [embedding_cache_key(text, self._model_name) for text in texts]
+        pending = {
+            key: text for key, text in zip(keys, texts, strict=True) if key not in self._cache
+        }
+        if pending:
+            for key, vector in zip(pending, self._embed(list(pending.values())), strict=True):
+                self._cache[key] = vector
+        return [self._cache[key] for key in keys]
+
     def index_units(self, units: Iterable[Unit]) -> None:
         """Embed and store ``units``, replacing any previously indexed content.
 
-        Embedding happens in one batch so the model is loaded at most once. A
-        re-index fully replaces the prior contents, so the lane never holds stale
-        or duplicated vectors.
+        Unit embeddings go through the content-addressed cache, so duplicate text
+        across units is embedded once. A re-index fully replaces which units the
+        lane ranks, so the lane never holds stale or duplicated rows.
         """
         materialized = list(units)
         self._unit_ids = [unit.id for unit in materialized]
-        self._vectors = self._embed([unit.text for unit in materialized]) if materialized else []
+        self._vectors = self._embed_cached([unit.text for unit in materialized])
 
     def search(self, query: str, limit: int) -> list[tuple[str, float]]:
         """Return ``(unit_id, cosine)`` pairs ranked best-first for ``query``.
@@ -146,7 +178,7 @@ class VectorIndex:
         """
         if not self._unit_ids or not query.strip() or limit <= 0:
             return []
-        query_vector = self._embed([query])[0]
+        query_vector = self._embed_cached([query])[0]
         scored = [
             (unit_id, _cosine(query_vector, vector))
             for unit_id, vector in zip(self._unit_ids, self._vectors, strict=True)
