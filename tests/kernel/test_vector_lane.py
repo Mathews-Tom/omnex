@@ -16,6 +16,7 @@ import pytest
 import omnex
 from omnex import KernelConfig
 from omnex.ir.types import Span, Unit
+from omnex.kernel.kernel import RetrievalKernel
 from omnex.kernel.vector import VectorIndex
 
 _DOCS = (Path(__file__).resolve().parents[1] / "fixtures" / "tls_docs").resolve()
@@ -116,6 +117,24 @@ def test_t2_run_is_reproducible_on_repeat() -> None:
     assert repr(first_receipt) == repr(second_receipt)
 
 
+def test_reindex_invalidates_the_vector_cache() -> None:
+    pytest.importorskip("fastembed")
+    # Reusing one kernel: index a corpus, run a T2 query (building the vector
+    # cache), then re-index a disjoint corpus. The next T2 query must reflect the
+    # new corpus -- never stale embeddings or a KeyError from ids absent in the
+    # rebuilt graph.
+    config = _config("T2", vector=True)
+    kernel = RetrievalKernel()
+    kernel.index([_unit("u_old", "An unrelated note about lunch menus and cafeteria hours.")])
+    kernel.retrieve("configure TLS", 200, config)
+    kernel.index([_unit("u_new", "Terminate TLS at the ingress using a certificate secret.")])
+    bundle, receipt = kernel.retrieve("configure TLS", 200, config)
+    rendered = bundle.render()
+    assert "certificate secret" in rendered
+    assert "cafeteria" not in rendered
+    assert receipt.recall_basis == "lexical_plus_vector"
+
+
 # --- core install without the embed extra (runs everywhere) ---
 
 
@@ -132,7 +151,7 @@ def test_core_install_without_embed_runs_t0_and_t1_unchanged() -> None:
         "from omnex.kernel.vector import vector_lane_available\n"
         "from pathlib import Path\n"
         "assert vector_lane_available() is False\n"
-        "docs = Path('tests/fixtures/tls_docs')\n"
+        f"docs = Path({str(_DOCS)!r})\n"
         "sources = [docs / 'ingress.md', docs / 'securing-traffic.md']\n"
         "profile = {'text': 1.0, 'title': 2.0, 'breadcrumb': 1.5, 'summary': 1.0}\n"
         "def cfg(tier):\n"
