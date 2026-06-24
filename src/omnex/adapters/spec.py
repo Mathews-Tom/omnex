@@ -568,8 +568,11 @@ class SpecAdapter:
             source_pointer = _nearest_emitted(site.ref_pointer, emitted)
             if source_pointer is None:
                 raise ValueError(f"reference outside any unit: {site.ref_pointer}")
-            if source_pointer == target_pointer:
-                continue
+            # Cyclic-reference guard: references are resolved one hop and never
+            # traversed, so a self- or mutually-recursive schema yields a finite
+            # edge set. A self-reference is a real edge (source == target) and is
+            # emitted once via the dedup above; downstream closure terminates on
+            # the visited set.
             kind: ReferenceKind = (
                 "FOREIGN_KEY"
                 if site.property_name is not None and _is_foreign_key(site.property_name)
