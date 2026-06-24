@@ -300,6 +300,79 @@ def _collect_operations(paths: _JsonNode, source: str, units: list[_UnitNode]) -
             )
 
 
+def _is_reference_property(value: _JsonNode) -> bool:
+    """True when a property value is a bare ``$ref`` (no inline shape of its own)."""
+    return value.is_object and value.get("$ref") is not None
+
+
+def _collect_fields(
+    schema: _JsonNode, base: Sequence[str], source: str, units: list[_UnitNode]
+) -> None:
+    """Emit a FIELD unit for each inline (non-``$ref``) property of a schema.
+
+    A property that is a bare ``$ref`` has no inline shape; it is recovered as a
+    schema edge in ``link`` instead of a FIELD, so the reference is attributed to
+    the enclosing schema rather than to a synthetic field.
+    """
+    properties = schema.get("properties")
+    if properties is None or properties.members is None:
+        return
+    for name, value in properties.members:
+        if _is_reference_property(value):
+            continue
+        units.append(
+            _UnitNode(
+                pointer=_pointer([*base, "properties", name]),
+                kind="FIELD",
+                title=name,
+                breadcrumb=(*base, "properties"),
+                span=Span(value.start, value.end),
+                summary=_string_member(value, "description", source) if value.is_object else None,
+            )
+        )
+
+
+def _collect_schemas(
+    container: _JsonNode, base: Sequence[str], source: str, units: list[_UnitNode]
+) -> None:
+    """Emit a SCHEMA unit and its FIELD units for each named schema in a container."""
+    if container.members is None:
+        return
+    for name, schema in container.members:
+        if not schema.is_object:
+            continue
+        schema_base = [*base, name]
+        units.append(
+            _UnitNode(
+                pointer=_pointer(schema_base),
+                kind="SCHEMA",
+                title=name,
+                breadcrumb=tuple(base),
+                span=Span(schema.start, schema.end),
+                summary=_string_member(schema, "description", source)
+                or _string_member(schema, "title", source),
+            )
+        )
+        _collect_fields(schema, schema_base, source, units)
+
+
+def _collect_root_schema(root: _JsonNode, source: str, units: list[_UnitNode]) -> None:
+    """Emit the root JSON-Schema as a SCHEMA unit when it has its own properties."""
+    if root.get("properties") is None:
+        return
+    units.append(
+        _UnitNode(
+            pointer="",
+            kind="SCHEMA",
+            title=_string_member(root, "title", source) or "(root)",
+            breadcrumb=(),
+            span=Span(root.start, root.end),
+            summary=_string_member(root, "description", source),
+        )
+    )
+    _collect_fields(root, [], source, units)
+
+
 class SpecAdapter:
     """Deterministic OpenAPI / JSON-Schema adapter emitting the IR."""
 
@@ -349,6 +422,16 @@ class SpecAdapter:
             paths = root.get("paths")
             if paths is not None and paths.is_object:
                 _collect_operations(paths, source, nodes)
+            components = root.get("components")
+            schemas = components.get("schemas") if components is not None else None
+            if schemas is not None and schemas.is_object:
+                _collect_schemas(schemas, ["components", "schemas"], source, nodes)
+        else:
+            for defs_key in ("$defs", "definitions"):
+                defs = root.get(defs_key)
+                if defs is not None and defs.is_object:
+                    _collect_schemas(defs, [defs_key], source, nodes)
+            _collect_root_schema(root, source, nodes)
         return [self._build_unit(document, source, node) for node in nodes]
 
     def link(self, document: Document, units: Sequence[Unit]) -> list[Reference]:
