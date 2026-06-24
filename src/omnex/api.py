@@ -17,7 +17,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from omnex.adapters import select_adapter
-from omnex.ir.types import Document, Reference, Unit, compute_content_hash, normalize_content
+from omnex.ir.types import Document, Reference, Unit, read_source
 from omnex.kernel.bundle import ContextBundle
 from omnex.kernel.config import KernelConfig
 from omnex.kernel.kernel import RetrievalKernel
@@ -62,13 +62,7 @@ def _full_dump_tokens(documents: Sequence[Document]) -> int:
     the rest of the pipeline, so a source that changed since ingest fails loud
     rather than yielding a baseline that does not match the parsed units.
     """
-    total = 0
-    for document in documents:
-        text = Path(document.uri).read_text(encoding="utf-8")
-        if compute_content_hash(text) != document.content_hash:
-            raise ValueError(f"source changed since ingest: {document.uri}")
-        total += count_tokens(normalize_content(text))
-    return total
+    return sum(count_tokens(read_source(document)) for document in documents)
 
 
 def index_sources(sources: Sequence[Path]) -> RetrievalKernel:

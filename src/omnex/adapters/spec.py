@@ -39,6 +39,7 @@ from omnex.ir.types import (
     compute_content_hash,
     make_document_id,
     normalize_content,
+    read_source,
 )
 from omnex.kernel.packer import count_tokens
 
@@ -558,7 +559,7 @@ class SpecAdapter:
         ids are pointer-derived and their spans are character offsets into the
         normalized source.
         """
-        source = _read_source(document)
+        source = read_source(document)
         root = _SpanParser(source).parse()
         flavor = _flavor_node(root)
         if flavor is None:
@@ -581,7 +582,7 @@ class SpecAdapter:
         resolved one hop and never traversed; a self-reference is a real
         ``source == target`` edge emitted once.
         """
-        source = _read_source(document)
+        source = read_source(document)
         root = _SpanParser(source).parse()
         flavor = _flavor_node(root)
         if flavor is None:
@@ -670,17 +671,3 @@ def _flavor_node(root: _JsonNode) -> str | None:
     if not root.is_object:
         return None
     return _classify(lambda key: root.get(key) is not None)
-
-
-def _read_source(document: Document) -> str:
-    """Re-read and normalize a document's source, failing loud if it changed.
-
-    ``parse`` and ``link`` reconstruct the source from ``document.uri`` (the IR
-    carries identity, not text). The content hash is re-verified so a source that
-    changed between ``ingest`` and parsing is rejected rather than silently
-    yielding stale structure.
-    """
-    text = Path(document.uri).read_text(encoding="utf-8")
-    if compute_content_hash(text) != document.content_hash:
-        raise ValueError(f"source changed since ingest: {document.uri}")
-    return normalize_content(text)
