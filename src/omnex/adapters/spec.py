@@ -437,6 +437,35 @@ def _resolve_target(reference: str) -> str | None:
     return reference[1:]
 
 
+def _resolve_pointer(root: _JsonNode, pointer: str) -> _JsonNode | None:
+    """Resolve an RFC 6901 JSON pointer against the parsed tree, or None.
+
+    Used to tell a target that exists but is not a retrievable unit (an OpenAPI
+    parameter/response/requestBody, etc.) apart from a truly dangling reference.
+    """
+    if pointer == "":
+        return root
+    node = root
+    for token in pointer.split("/")[1:]:
+        segment = token.replace("~1", "/").replace("~0", "~")
+        if node.members is not None:
+            child = node.get(segment)
+            if child is None:
+                return None
+            node = child
+        elif node.elements is not None:
+            try:
+                index = int(segment)
+            except ValueError:
+                return None
+            if not 0 <= index < len(node.elements):
+                return None
+            node = node.elements[index]
+        else:
+            return None
+    return node
+
+
 def _is_foreign_key(property_name: str) -> bool:
     """True for a conventional foreign-key property name (``*_id`` / ``*Id``)."""
     return property_name.endswith("_id") or property_name.endswith("Id")
@@ -545,9 +574,12 @@ class SpecAdapter:
         emitted unit to the referenced unit, with ``confidence = 1.0`` and the
         ``$ref`` JSON pointer as evidence. A reference property named like a
         foreign key (``*_id`` / ``*Id``) is classified ``FOREIGN_KEY``; every
-        other reference is ``REFERENCES``. External references are skipped;
-        dangling internal references fail loud. Self-references are handled by
-        the cyclic-reference commit.
+        other reference is ``REFERENCES``. An external reference, or an internal
+        reference whose target is a real node that is not a retrievable unit, is
+        skipped; only a reference whose target resolves to nothing fails loud.
+        Self- and mutually-recursive schemas terminate because references are
+        resolved one hop and never traversed; a self-reference is a real
+        ``source == target`` edge emitted once.
         """
         source = _read_source(document)
         root = _SpanParser(source).parse()
@@ -564,10 +596,17 @@ class SpecAdapter:
             if target_pointer is None:
                 continue
             if target_pointer not in emitted:
-                raise ValueError(f"dangling internal reference: {site.target}")
+                # A target that resolves to a real but non-unit node (an OpenAPI
+                # parameter/response/requestBody, etc.) is out of scope, like an
+                # external ref; only a target resolving to nothing is dangling.
+                if _resolve_pointer(root, target_pointer) is None:
+                    raise ValueError(f"dangling internal reference: {site.target}")
+                continue
             source_pointer = _nearest_emitted(site.ref_pointer, emitted)
             if source_pointer is None:
-                raise ValueError(f"reference outside any unit: {site.ref_pointer}")
+                # The $ref sits outside any retrievable unit (e.g. root-level
+                # composition with no emitted root schema): no source to anchor.
+                continue
             # Cyclic-reference guard: references are resolved one hop and never
             # traversed, so a self- or mutually-recursive schema yields a finite
             # edge set. A self-reference is a real edge (source == target) and is
