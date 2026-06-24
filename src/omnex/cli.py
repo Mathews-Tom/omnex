@@ -18,7 +18,43 @@ from pathlib import Path
 
 import click
 
-from omnex import api
+from omnex import KernelConfig, api
+
+# Default token budget for a query when ``--budget`` is omitted. A query is a
+# budgeted retrieval, so the surface always passes a concrete budget through to
+# the kernel rather than leaving it implicit.
+_DEFAULT_BUDGET = 4000
+
+
+def default_config() -> KernelConfig:
+    """The CLI's fixed retrieval config: the byte-exact, model-free T0 floor.
+
+    The config is modality-agnostic: the BM25F profile names every indexed FTS
+    column and the hop budget names every reference kind an adapter can emit, so
+    one config serves prose and spec corpora identically. The surface never
+    picks a tier or tunes ranking -- the T0 floor is the documented default and
+    keeps every CLI run byte-exact and model-free. Exposed (not inlined) so a
+    caller, and the parity tests, can drive the library with the exact config the
+    CLI uses.
+    """
+    return KernelConfig(
+        tier="T0",
+        bm25_profile={"title": 2.0, "breadcrumb": 1.5, "text": 1.0, "summary": 1.0},
+        hop_budget_by_kind={
+            "CONTAINS": 2,
+            "SIBLING": 0,
+            "CROSS_REF": 1,
+            "CITES": 1,
+            "LINKS_TO": 1,
+            "REFERENCES": 1,
+            "FOREIGN_KEY": 1,
+            "IMPORTS": 1,
+            "CALLS": 1,
+        },
+        confidence_decay=0.8,
+        enable_vector_lane=False,
+        enable_rerank=False,
+    )
 
 
 def _collect_files(paths: Iterable[Path]) -> list[Path]:
@@ -67,3 +103,25 @@ def index_command(paths: tuple[Path, ...]) -> None:
         f"indexed {len(documents)} document(s), {len(units)} unit(s), "
         f"{len(references)} reference(s)"
     )
+
+
+@main.command(name="query")
+@click.argument("corpus", type=click.Path(exists=True, path_type=Path))
+@click.argument("question")
+@click.option(
+    "--budget",
+    type=int,
+    default=_DEFAULT_BUDGET,
+    show_default=True,
+    help="Token budget the packed context must fit within.",
+)
+def query_command(corpus: Path, question: str, budget: int) -> None:
+    """Answer QUESTION over CORPUS under a token budget and print the context.
+
+    Routes CORPUS through its adapters and runs the same T0 kernel pipeline the
+    library does, then prints the rendered ContextBundle. The retrieval, ranking,
+    and returned set are exactly the library's; the CLI only renders them.
+    """
+    sources = _collect_files([corpus])
+    bundle, _ = api.query_sources(sources, question, budget, default_config())
+    click.echo(bundle.render())
