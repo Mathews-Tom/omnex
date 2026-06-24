@@ -97,6 +97,7 @@ class RetrievalKernel:
             model_version=None,
             extraction_used=False,
             determinism_class=_DETERMINISM_BY_TIER[config.tier],
+            reference_closure_complete=False,
         )
         return bundle, receipt
 

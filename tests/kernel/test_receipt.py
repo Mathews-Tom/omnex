@@ -18,6 +18,7 @@ def _receipt() -> Receipt:
         model_version=None,
         extraction_used=False,
         determinism_class="byte_exact",
+        reference_closure_complete=False,
     )
 
 
@@ -30,6 +31,7 @@ def test_receipt_records_its_fields() -> None:
     assert receipt.model_version is None
     assert receipt.extraction_used is False
     assert receipt.determinism_class == "byte_exact"
+    assert receipt.reference_closure_complete is False
 
 
 def test_receipt_is_frozen() -> None:

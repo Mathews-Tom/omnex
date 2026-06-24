@@ -25,7 +25,10 @@ class Receipt:
     full-document dump upper bound it is measured against. ``tiers_run`` lists the
     tiers exercised. ``model_used``/``model_version`` and ``extraction_used``
     record any opt-in lane outside the byte-exact floor. ``determinism_class`` is
-    the reproducibility guarantee this run may claim.
+    the reproducibility guarantee this run may claim. ``reference_closure_complete``
+    is True only when a tier computed a reference closure and every unit in that
+    closure was emitted in full (an exact set-membership fact, never a threshold);
+    it is False on tiers that compute no closure.
     """
 
     returned_tokens: int
@@ -35,3 +38,4 @@ class Receipt:
     model_version: str | None
     extraction_used: bool
     determinism_class: DeterminismClass
+    reference_closure_complete: bool
