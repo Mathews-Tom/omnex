@@ -47,3 +47,45 @@ def rrf(rankings: Sequence[Sequence[str]], k: int = _DEFAULT_RRF_K) -> list[str]
     # tie-break holds regardless of lane order or count.
     scores = {unit_id: math.fsum(unit_terms) for unit_id, unit_terms in terms.items()}
     return sorted(scores, key=lambda unit_id: (-scores[unit_id], unit_id))
+
+
+def rsf(scored: Sequence[Sequence[tuple[str, float]]]) -> list[str]:
+    """Relative-score fusion of scored id lanes.
+
+    Each lane's scores are min-max normalized to ``[0, 1]`` (a lane whose scores
+    are all equal normalizes to ``1.0``), then summed per id across lanes. The
+    fused order sorts by descending total, breaking ties by ascending unit id. A
+    single lane passes through in its own score order; empty lanes contribute
+    nothing. The first score seen for a repeated id within a lane wins.
+    """
+    totals: dict[str, float] = {}
+    for lane in scored:
+        lane_scores: dict[str, float] = {}
+        for unit_id, score in lane:
+            if unit_id not in lane_scores:
+                lane_scores[unit_id] = score
+        if not lane_scores:
+            continue
+        low = min(lane_scores.values())
+        high = max(lane_scores.values())
+        spread = high - low
+        for unit_id, score in lane_scores.items():
+            normalized = 1.0 if spread == 0.0 else (score - low) / spread
+            totals[unit_id] = totals.get(unit_id, 0.0) + normalized
+    return sorted(totals, key=lambda unit_id: (-totals[unit_id], unit_id))
+
+
+def combine(rankings: Sequence[Sequence[str]], k: int = _DEFAULT_RRF_K) -> list[str]:
+    """Combine retrieval lanes into one fused ranking.
+
+    Empty lanes are dropped. With no non-empty lane the result is empty; with a
+    single non-empty lane the result is that lane deduplicated in place (an exact
+    passthrough for duplicate-free input); with several lanes the fusion is
+    :func:`rrf`. This is the kernel's fuse entry point.
+    """
+    lanes = [ranking for ranking in rankings if ranking]
+    if not lanes:
+        return []
+    if len(lanes) == 1:
+        return list(_dedupe_best_rank(lanes[0]))
+    return rrf(lanes, k)
