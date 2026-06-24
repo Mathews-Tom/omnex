@@ -558,7 +558,7 @@ class SpecAdapter:
         if {_unit_id(document.id, node.pointer) for node in nodes} != {unit.id for unit in units}:
             raise ValueError("link received units that do not match the parsed source")
         emitted = frozenset(node.pointer for node in nodes)
-        references: list[Reference] = []
+        edges: dict[tuple[str, str, ReferenceKind], set[str]] = {}
         for site in _collect_refs(root, source):
             target_pointer = _resolve_target(site.target)
             if target_pointer is None:
@@ -575,15 +575,25 @@ class SpecAdapter:
                 if site.property_name is not None and _is_foreign_key(site.property_name)
                 else "REFERENCES"
             )
-            references.append(
-                Reference(
-                    source_id=_unit_id(document.id, source_pointer),
-                    target_id=_unit_id(document.id, target_pointer),
-                    kind=kind,
-                    confidence=1.0,
-                    evidence=(site.ref_pointer,),
-                )
+            key = (
+                _unit_id(document.id, source_pointer),
+                _unit_id(document.id, target_pointer),
+                kind,
             )
+            # Dedup shared targets: several $ref sites that resolve to the same
+            # (source, target, kind) edge collapse into one Reference whose
+            # evidence carries every contributing pointer.
+            edges.setdefault(key, set()).add(site.ref_pointer)
+        references = [
+            Reference(
+                source_id=source_id,
+                target_id=target_id,
+                kind=kind,
+                confidence=1.0,
+                evidence=tuple(sorted(evidence)),
+            )
+            for (source_id, target_id, kind), evidence in edges.items()
+        ]
         references.sort(key=lambda ref: (ref.source_id, ref.target_id, ref.kind, ref.evidence))
         return references
 
