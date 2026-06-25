@@ -18,6 +18,7 @@ from omnex.doctor.checks import (
     check_adapters,
     check_extras,
     check_metrics,
+    check_persistence,
     check_registration,
 )
 from omnex.metrics import settings, store
@@ -150,3 +151,14 @@ def test_check_adapters_routes_each_modality() -> None:
     assert check.status == "ok"
     assert check.details["routes"] == {"prose": "ProseAdapter", "spec": "SpecAdapter"}
     assert check.details["adapters"] == ["SpecAdapter", "ProseAdapter"]
+
+
+# --- persistence mode -----------------------------------------------------------
+
+
+def test_check_persistence_reports_stateless() -> None:
+    check = check_persistence()
+    assert check.name == "persistence"
+    assert check.status == "ok"
+    assert check.details["mode"] == "stateless"
+    assert "stateless" in check.summary

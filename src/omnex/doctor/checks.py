@@ -177,3 +177,21 @@ def check_adapters() -> Check:
         summary=f"{len(adapters)} adapter(s) healthy: {', '.join(names)}",
         details={"adapters": names, "routes": routes},
     )
+
+
+def check_persistence() -> Check:
+    """Report the persistence mode -- omnex is stateless.
+
+    The persisted ``.omnex/`` index lifecycle was conditional on the persistence
+    decision choosing "persisted" (see ``docs/system-design.md`` section 10); it
+    chose "stateless", so omnex builds and discards its index per call and writes
+    no on-disk index. There is therefore nothing to inspect, and the check omits
+    any index-presence, staleness, revision, or disk-usage section. When a
+    persisted lifecycle is adopted, this check grows to report those fields.
+    """
+    return Check(
+        name="persistence",
+        status="ok",
+        summary="stateless: no .omnex/ index is persisted",
+        details={"mode": "stateless"},
+    )
