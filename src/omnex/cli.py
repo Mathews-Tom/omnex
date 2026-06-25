@@ -235,6 +235,19 @@ def metrics_enable_command(on: bool) -> None:
     click.echo(f"Usage metrics {'enabled' if on else 'disabled'}.")
 
 
+@metrics_group.command(name="trace")
+@click.option("--on/--off", "on", default=True, help="Turn detailed tracing on (default) or off.")
+def metrics_trace_command(on: bool) -> None:
+    """Turn detailed tracing on or off -- a second opt-in, separate from recording.
+
+    A trace stores only anonymous diagnostics (tier, determinism, recall basis,
+    closure) and takes effect only when usage recording is also on. It never
+    stores source or output, and OMNEX_USAGE_TRACE overrides this per session.
+    """
+    settings.set_trace_enabled(on)
+    click.echo(f"Usage trace {'enabled' if on else 'disabled'}.")
+
+
 @metrics_group.command(name="summary")
 @click.option(
     "--format",
@@ -247,7 +260,9 @@ def metrics_enable_command(on: bool) -> None:
 def metrics_summary_command(output_format: str) -> None:
     """Report token savings and the CLI-vs-MCP surface split from the local ledger."""
     events = store.read_events(settings.ledger_path())
-    report = summary.build_summary(events, enabled=settings.metrics_enabled())
+    report = summary.build_summary(
+        events, enabled=settings.metrics_enabled(), trace_enabled=settings.trace_enabled()
+    )
     if output_format == "json":
         click.echo(json.dumps(summary.summary_to_dict(report), indent=2, sort_keys=True))
     else:

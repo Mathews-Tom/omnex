@@ -12,6 +12,8 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import socket
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -408,3 +410,158 @@ def test_mcp_server_exposes_no_metrics_tools() -> None:
 
     names = {tool.name for tool in asyncio.run(server.list_tools())}
     assert names == {"index", "query"}
+
+
+def test_trace_off_by_default() -> None:
+    assert settings.trace_enabled() is False
+
+
+def test_trace_setting_round_trips() -> None:
+    settings.set_trace_enabled(True)
+    assert settings.trace_enabled() is True
+    settings.set_trace_enabled(False)
+    assert settings.trace_enabled() is False
+
+
+def test_trace_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OMNEX_USAGE_TRACE", "on")
+    assert settings.trace_enabled() is True
+
+
+def test_trace_requires_metrics_to_be_enabled() -> None:
+    # Trace on but recording off: the second opt-in never enables recording itself.
+    settings.set_trace_enabled(True)
+    bundle, receipt = _query()
+    recorder.record_query(surface="cli", receipt=receipt, bundle=bundle, file_count=1)
+    assert store.read_events(settings.ledger_path()) == []
+    assert store.read_traces(settings.ledger_path()) == []
+
+
+def test_event_without_trace_writes_no_trace() -> None:
+    settings.set_metrics_enabled(True)
+    bundle, receipt = _query()
+    recorder.record_query(surface="cli", receipt=receipt, bundle=bundle, file_count=1)
+    assert len(store.read_events(settings.ledger_path())) == 1
+    assert store.read_traces(settings.ledger_path()) == []
+
+
+def test_trace_records_anonymous_diagnostics() -> None:
+    settings.set_metrics_enabled(True)
+    settings.set_trace_enabled(True)
+    bundle, receipt = _query()
+    recorder.record_query(surface="cli", receipt=receipt, bundle=bundle, file_count=1)
+    traces = store.read_traces(settings.ledger_path())
+    assert len(traces) == 1
+    trace = traces[0]
+    assert trace.tool == "query"
+    assert trace.surface == "cli"
+    assert trace.tier == ",".join(receipt.tiers_run)
+    assert trace.determinism_class == receipt.determinism_class
+    assert trace.recall_basis == receipt.recall_basis
+    assert trace.reference_closure_complete == receipt.reference_closure_complete
+
+
+def test_trace_schema_has_no_source_or_output_fields() -> None:
+    names = {field.name for field in dataclasses.fields(store.UsageTrace)}
+    assert names == {
+        "occurred_at",
+        "tool",
+        "surface",
+        "repo_id",
+        "tier",
+        "determinism_class",
+        "recall_basis",
+        "reference_closure_complete",
+    }
+    assert names.isdisjoint({"question", "path", "corpus", "text", "output", "source", "content"})
+
+
+def test_trace_bytes_carry_no_question_or_path() -> None:
+    settings.set_metrics_enabled(True)
+    settings.set_trace_enabled(True)
+    bundle, receipt = _query()
+    recorder.record_query(surface="cli", receipt=receipt, bundle=bundle, file_count=1)
+    raw = settings.ledger_path().read_bytes()
+    assert b"ZZTOPSECRETMARKER" not in raw
+    assert str(_PAYMENTS).encode() not in raw
+    assert b"payments_openapi" not in raw
+
+
+def test_delete_removes_traces() -> None:
+    settings.set_metrics_enabled(True)
+    settings.set_trace_enabled(True)
+    bundle, receipt = _query()
+    recorder.record_query(surface="cli", receipt=receipt, bundle=bundle, file_count=1)
+    store.delete_ledger(settings.ledger_path())
+    assert store.read_traces(settings.ledger_path()) == []
+
+
+def test_metrics_trace_command_reflected_in_summary() -> None:
+    runner = CliRunner()
+    assert runner.invoke(main, ["metrics", "trace"]).exit_code == 0
+    data = json.loads(runner.invoke(main, ["metrics", "summary", "--format", "json"]).output)
+    assert data["trace_enabled"] is True
+    assert "Trace: on" in runner.invoke(main, ["metrics", "summary"]).output
+
+
+def test_metrics_path_makes_no_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings.set_metrics_enabled(True)
+    settings.set_trace_enabled(True)
+    # Build a real receipt before the patch (the kernel is out of scope here).
+    bundle, receipt = _query()
+
+    def _boom(*args: object, **kwargs: object) -> object:
+        raise AssertionError("the metrics path opened a network socket")
+
+    monkeypatch.setattr(socket, "socket", _boom)
+    monkeypatch.setattr(socket, "create_connection", _boom)
+    recorder.record_query(surface="cli", receipt=receipt, bundle=bundle, file_count=1)
+    events = store.read_events(settings.ledger_path())
+    report = summary.build_summary(events, enabled=True, trace_enabled=True)
+    summary.summary_to_dict(report)
+    store.read_traces(settings.ledger_path())
+    assert store.delete_ledger(settings.ledger_path()) is True
+
+
+def test_ledger_bytes_carry_no_corpus_unit_text() -> None:
+    # Beyond the question and path: a distinctive schema name present in the
+    # returned units must not leak into the ledger either.
+    settings.set_metrics_enabled(True)
+    bundle, receipt = _query()
+    assert "PaymentRequest" in bundle.render()
+    recorder.record_query(surface="cli", receipt=receipt, bundle=bundle, file_count=1)
+    assert b"PaymentRequest" not in settings.ledger_path().read_bytes()
+
+
+def test_recorder_isolates_a_ledger_write_failure(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    settings.set_metrics_enabled(True)
+    bundle, receipt = _query()
+
+    def _boom(*args: object, **kwargs: object) -> None:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(store, "insert_event", _boom)
+    # A failed ledger write must not propagate into the retrieval path...
+    recorder.record_query(surface="cli", receipt=receipt, bundle=bundle, file_count=1)
+    # ...but must be surfaced loudly on stderr, never silently swallowed.
+    assert "usage metrics not recorded" in capsys.readouterr().err
+
+
+def test_recorder_isolates_a_corrupt_settings_file() -> None:
+    # A torn or hand-edited settings.json must not crash query/index, even though
+    # the recorder reads it on the hot path of every run.
+    home = settings.omnex_home()
+    home.mkdir(parents=True, exist_ok=True)
+    settings.settings_path().write_text("{ not valid json", encoding="utf-8")
+    bundle, receipt = _query()
+    recorder.record_query(surface="cli", receipt=receipt, bundle=bundle, file_count=1)
+
+
+def test_write_settings_is_atomic_and_leaves_no_temp_file() -> None:
+    settings.set_metrics_enabled(True)
+    leftovers = [path.name for path in settings.omnex_home().iterdir() if path.suffix == ".tmp"]
+    assert leftovers == []
+    # The persisted file is always valid JSON, never a torn write.
+    json.loads(settings.settings_path().read_text(encoding="utf-8"))

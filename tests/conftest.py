@@ -16,8 +16,9 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def omnex_home(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Point the omnex home at an isolated temp dir; clear the enable override."""
+    """Point the omnex home at an isolated temp dir; clear the enable overrides."""
     home = tmp_path_factory.mktemp("omnex-home") / ".omnex"
     monkeypatch.setenv("OMNEX_HOME", str(home))
     monkeypatch.delenv("OMNEX_USAGE_METRICS", raising=False)
+    monkeypatch.delenv("OMNEX_USAGE_TRACE", raising=False)
     return home
