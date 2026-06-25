@@ -17,9 +17,13 @@ from click.testing import CliRunner
 
 from omnex.cli import main
 from omnex.client_setup import (
+    AGENT_GUIDANCE_START,
     ALL_CLIENTS,
     ClientName,
+    append_agent_guidance,
     build_client_install_plan,
+    render_agent_guidance_block,
+    render_agent_guidance_preview,
     render_client_install_preview,
     resolve_scope,
     write_client_install_plan,
@@ -246,3 +250,69 @@ def test_dry_run_codex_previews_toml_without_writing(home: Path) -> None:
     assert result.exit_code == 0, result.output
     assert "[mcp_servers.omnex]" in result.output
     assert not (home / ".codex" / "config.toml").exists()
+
+
+def test_guidance_block_names_omnex_tools() -> None:
+    block = render_agent_guidance_block()
+    assert AGENT_GUIDANCE_START in block
+    assert "`index`" in block
+    assert "`query`" in block
+
+
+def test_append_agent_guidance_is_idempotent(tmp_path: Path) -> None:
+    agent_file = tmp_path / "AGENTS.md"
+    assert append_agent_guidance(agent_file) is True
+    assert append_agent_guidance(agent_file) is False
+    assert agent_file.read_text(encoding="utf-8").count(AGENT_GUIDANCE_START) == 1
+
+
+def test_append_agent_guidance_preserves_existing_content(tmp_path: Path) -> None:
+    agent_file = tmp_path / "AGENTS.md"
+    agent_file.write_text("# Project rules\n\nExisting content.\n", encoding="utf-8")
+    append_agent_guidance(agent_file)
+    text = agent_file.read_text(encoding="utf-8")
+    assert "Existing content." in text
+    assert AGENT_GUIDANCE_START in text
+
+
+def test_append_agent_guidance_creates_parent_dirs(tmp_path: Path) -> None:
+    agent_file = tmp_path / "nested" / "dir" / "AGENTS.md"
+    assert append_agent_guidance(agent_file) is True
+    assert agent_file.exists()
+
+
+def test_render_guidance_preview_states_presence_and_writes_nothing(tmp_path: Path) -> None:
+    agent_file = tmp_path / "AGENTS.md"
+    preview = render_agent_guidance_preview(agent_file)
+    assert "Append omnex MCP guidance" in preview
+    assert AGENT_GUIDANCE_START in preview
+    assert not agent_file.exists()
+    append_agent_guidance(agent_file)
+    assert "already present" in render_agent_guidance_preview(agent_file)
+
+
+def test_command_agent_file_appends_once(home: Path, tmp_path: Path) -> None:
+    agent_file = tmp_path / "AGENTS.md"
+    first = CliRunner().invoke(
+        main, ["install-client", "claude-code", "--agent-file", str(agent_file)]
+    )
+    assert first.exit_code == 0, first.output
+    assert "Appended omnex MCP guidance" in first.output
+    second = CliRunner().invoke(
+        main, ["install-client", "claude-code", "--agent-file", str(agent_file)]
+    )
+    assert second.exit_code == 0, second.output
+    assert "already present" in second.output
+    assert agent_file.read_text(encoding="utf-8").count(AGENT_GUIDANCE_START) == 1
+
+
+def test_command_dry_run_agent_file_writes_nothing(home: Path, tmp_path: Path) -> None:
+    agent_file = tmp_path / "AGENTS.md"
+    result = CliRunner().invoke(
+        main,
+        ["install-client", "claude-code", "--dry-run", "--agent-file", str(agent_file)],
+    )
+    assert result.exit_code == 0, result.output
+    assert AGENT_GUIDANCE_START in result.output
+    assert not agent_file.exists()
+    assert not (home / ".claude.json").exists()
