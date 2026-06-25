@@ -29,6 +29,7 @@ dependencies = [
 embed = ["fastembed>=0.3"]
 mcp = ["mcp>=1.0"]
 langchain = ["langchain-core>=0.3"]
+llamaindex = ["llama-index-core>=0.11"]
 # Benchmark-only dependencies (chunk-and-embed baseline). Never required by the
 # product; the embedding model is a benchmark dependency, not omnex's retrieval path.
 bench = ["omnex[embed]"]
@@ -75,7 +76,7 @@ warn_unused_configs = true
 files = ["src/omnex", "tests"]
 
 [[tool.mypy.overrides]]
-module = ["networkx.*", "fastembed.*", "onnxruntime.*", "langchain_core.*"]
+module = ["networkx.*", "fastembed.*", "onnxruntime.*", "langchain_core.*", "llama_index.*"]
 ignore_missing_imports = true
 
 # The integration retrievers subclass their framework's base class, which mypy
