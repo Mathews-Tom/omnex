@@ -340,6 +340,8 @@ flowchart TD
 
 The developer workflow is the same across surfaces: submit a query under a budget against a corpus, and inspect the `Receipt` when validating determinism class, included units, token counts, adapter choices, or `extraction=absent` failures. The in-memory index and `StructureGraph` are built per call and discarded when the call returns; nothing is persisted (see §10).
 
+Two further packaging surfaces wrap these three without changing retrieval. The optional LangChain (`OmnexRetriever`) and LlamaIndex (`OmnexLlamaRetriever`) retrievers wrap the library: each maps a query's packed bundle to the framework's document/node type, carrying the receipt as provenance, so omnex drops into an existing RAG stack. The slim and full Docker images package the CLI and the MCP server for container deployment (the full image also carries the `[embed]` and `[mcp]` extras for a warm-container MCP server). Both surfaces ship behind extras; the core install and the byte-exact retrieval path are unchanged.
+
 ## 9. Worked structural example
 
 Example A is the first-proof path for omnex because it exercises the moat directly. The seed is the `POST /payments` operation. T1 walks the reference graph deterministically until the request and response shapes are complete, dedupes the shared `Money` schema, and packs the minimal complete closure.
