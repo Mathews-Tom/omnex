@@ -25,3 +25,14 @@ jobs:
         run: |
           docker run --rm -v "${{ github.workspace }}/tests/fixtures:/data:ro" omnex:slim \
             query /data/payments_openapi.json "create payment" --budget 400
+
+  full:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the full image
+        run: docker build -f Dockerfile.full -t omnex:full .
+
+      - name: Smoke test the CLI help
+        run: docker run --rm omnex:full --help
