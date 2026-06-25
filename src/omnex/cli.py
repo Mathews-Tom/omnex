@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import cast
 
 import click
 
@@ -27,6 +28,14 @@ from omnex._surface import (
     index_corpus,
     receipt_dict,
     result_payload,
+)
+from omnex.client_setup import (
+    ALL_CLIENTS,
+    ClientName,
+    ClientScope,
+    build_client_install_plan,
+    resolve_scope,
+    write_client_install_plan,
 )
 
 
@@ -133,3 +142,33 @@ def query_command(corpus: Path, question: str, budget: int, output_format: str) 
         click.echo(_render_json(bundle, receipt))
     else:
         click.echo(_render_markdown(bundle, receipt))
+
+
+@main.command(name="install-client")
+@click.argument("client", type=click.Choice(list(ALL_CLIENTS)))
+@click.argument("source", required=False, default=None)
+@click.option(
+    "--scope",
+    type=click.Choice(["project", "user"]),
+    default=None,
+    help="Install scope. Default user/global; a SOURCE path or --scope project is repo-local.",
+)
+def install_client_command(client: str, source: str | None, scope: str | None) -> None:
+    """Write the MCP client configuration that registers the omnex-mcp server.
+
+    CLIENT is one of the supported MCP clients; SOURCE is the repo root for a
+    project-scope install (defaults to the current directory). The omnex entry
+    is merged into the client's existing config without clobbering unrelated
+    sections, so adopters do not hand-write MCP JSON for the existing server.
+    """
+    try:
+        resolved_scope = resolve_scope(
+            cast("ClientName", client),
+            source,
+            cast("ClientScope | None", scope),
+        )
+        plan = build_client_install_plan(cast("ClientName", client), source, scope=resolved_scope)
+        target = write_client_install_plan(plan)
+    except (ValueError, OSError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"Wrote {client} config: {target}")
