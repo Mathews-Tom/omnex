@@ -20,7 +20,7 @@ from pathlib import Path
 
 # Bumped when the on-disk schema changes so a future reader can detect and reject
 # a ledger it does not understand rather than silently misreading it.
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 
 _CREATE_EVENTS = """
 CREATE TABLE IF NOT EXISTS events (
@@ -50,6 +50,37 @@ FROM events
 ORDER BY id ASC
 """
 
+# The trace table holds richer per-run diagnostics that the summary aggregates
+# away -- but still only anonymous fields. It deliberately has no column for the
+# question, the corpus path, unit text, or rendered output.
+_CREATE_TRACES = """
+CREATE TABLE IF NOT EXISTS traces (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    occurred_at TEXT NOT NULL,
+    tool TEXT NOT NULL,
+    surface TEXT NOT NULL,
+    repo_id TEXT NOT NULL,
+    tier TEXT NOT NULL,
+    determinism_class TEXT NOT NULL,
+    recall_basis TEXT NOT NULL,
+    reference_closure_complete INTEGER NOT NULL
+)
+"""
+
+_INSERT_TRACE = """
+INSERT INTO traces (
+    occurred_at, tool, surface, repo_id,
+    tier, determinism_class, recall_basis, reference_closure_complete
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+"""
+
+_SELECT_TRACES = """
+SELECT occurred_at, tool, surface, repo_id,
+       tier, determinism_class, recall_basis, reference_closure_complete
+FROM traces
+ORDER BY id ASC
+"""
+
 
 @dataclass(frozen=True, slots=True)
 class UsageEvent:
@@ -73,6 +104,27 @@ class UsageEvent:
     repo_id: str
 
 
+@dataclass(frozen=True, slots=True)
+class UsageTrace:
+    """One anonymous diagnostic trace for a retrieval.
+
+    Carries only receipt-derived diagnostics the summary aggregates away -- the
+    ``tier`` exercised, the ``determinism_class``, the ``recall_basis``, and
+    whether the reference closure was complete -- plus the same anonymous
+    identifiers an event holds. It never carries the question, a path, unit text,
+    or rendered output.
+    """
+
+    occurred_at: str
+    tool: str
+    surface: str
+    repo_id: str
+    tier: str
+    determinism_class: str
+    recall_basis: str
+    reference_closure_complete: bool
+
+
 @contextmanager
 def _connect(path: Path) -> Iterator[sqlite3.Connection]:
     """Open the ledger, ensuring the schema and the home directory exist."""
@@ -81,6 +133,7 @@ def _connect(path: Path) -> Iterator[sqlite3.Connection]:
     try:
         conn.row_factory = sqlite3.Row
         conn.execute(_CREATE_EVENTS)
+        conn.execute(_CREATE_TRACES)
         conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
         yield conn
         conn.commit()
@@ -119,6 +172,33 @@ def read_events(path: Path) -> list[UsageEvent]:
             baseline_tokens=int(row["baseline_tokens"]),
             file_count=int(row["file_count"]),
             repo_id=str(row["repo_id"]),
+        )
+        for row in rows
+    ]
+
+
+def insert_trace(path: Path, trace: UsageTrace) -> None:
+    """Append one anonymous diagnostic trace, creating the ledger on first write."""
+    with _connect(path) as conn:
+        conn.execute(_INSERT_TRACE, astuple(trace))
+
+
+def read_traces(path: Path) -> list[UsageTrace]:
+    """Read every trace in insertion order, or ``[]`` when no ledger exists."""
+    if not path.exists():
+        return []
+    with _connect(path) as conn:
+        rows = conn.execute(_SELECT_TRACES).fetchall()
+    return [
+        UsageTrace(
+            occurred_at=str(row["occurred_at"]),
+            tool=str(row["tool"]),
+            surface=str(row["surface"]),
+            repo_id=str(row["repo_id"]),
+            tier=str(row["tier"]),
+            determinism_class=str(row["determinism_class"]),
+            recall_basis=str(row["recall_basis"]),
+            reference_closure_complete=bool(int(row["reference_closure_complete"])),
         )
         for row in rows
     ]

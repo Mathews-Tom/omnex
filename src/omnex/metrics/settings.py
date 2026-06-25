@@ -29,6 +29,7 @@ from pathlib import Path
 # per-session enable override.
 _ENV_HOME = "OMNEX_HOME"
 _ENV_METRICS = "OMNEX_USAGE_METRICS"
+_ENV_TRACE = "OMNEX_USAGE_TRACE"
 
 # Values that read as "on" for the enable override (compared case-insensitively).
 _TRUTHY = frozenset({"1", "on", "true", "yes"})
@@ -37,6 +38,7 @@ _SETTINGS_NAME = "settings.json"
 _LEDGER_NAME = "usage.sqlite"
 
 _METRICS_KEY = "usage_metrics"
+_TRACE_KEY = "usage_trace"
 # Per-install random salt and the repo-id map. The salt makes the repo key a
 # non-reversible hash of the repo root; the map holds only random ids keyed by
 # that hash, so the repo path is never written to disk.
@@ -109,6 +111,26 @@ def set_metrics_enabled(enabled: bool) -> None:
     """Persist the usage-recording setting (independent of the env override)."""
     settings = read_settings()
     settings[_METRICS_KEY] = enabled
+    write_settings(settings)
+
+
+def trace_enabled() -> bool:
+    """Whether detailed tracing is on -- the second, separate opt-in.
+
+    Resolved like the metrics flag (the ``OMNEX_USAGE_TRACE`` override, then the
+    persisted ``usage_trace`` setting), and off by default. Tracing only takes
+    effect when usage recording is also on; it never enables recording by itself.
+    """
+    override = _env_override(_ENV_TRACE)
+    if override is not None:
+        return override
+    return bool(read_settings().get(_TRACE_KEY, False))
+
+
+def set_trace_enabled(enabled: bool) -> None:
+    """Persist the tracing setting (independent of the env override)."""
+    settings = read_settings()
+    settings[_TRACE_KEY] = enabled
     write_settings(settings)
 
 
