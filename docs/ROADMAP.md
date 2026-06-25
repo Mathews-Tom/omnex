@@ -44,6 +44,7 @@ omnex is intentionally conservative about roadmap promises. This document makes 
 | **Adoption layer** | Cross-client `install-client` registration ships for claude-code, codex, cursor, opencode, pi, and omp. |
 | **Local usage metrics** | Local usage metrics ship as an off-by-default, CLI-only capability. |
 | **Diagnostics** | `doctor` ships as the installation and operational health check surface. |
+| **Distribution** | omnex is published to PyPI; `uv tool install omnex` resolves released versions, and the GitHub git URL still installs the latest unreleased build. |
 
 ### Persistence model
 
@@ -58,7 +59,6 @@ The roadmap items below are explicit next steps, but none of them are part of `0
 | **T3 model-extraction lane** | Adapter-local OCR, caption, and transcription paths for sources that cannot enter the IR as usable text today. |
 | **Code adapter** | A tree-sitter-backed adapter that emits `FUNCTION` and `CLASS` units plus `IMPORTS` and `CALLS` edges. This is the seam for an eventual archex-on-omnex migration, not a shipped capability yet. |
 | **Mixed-corpus cross-modality linking** | Linking across prose and code so one corpus can recover relationships that span both modalities. |
-| **PyPI publication** | Publishing omnex so `uv tool install omnex` works without a Git URL. |
 
 ## Principles guiding the roadmap
 
