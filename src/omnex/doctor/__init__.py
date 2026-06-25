@@ -19,13 +19,23 @@ from omnex.doctor.checks import (
     check_registration,
 )
 from omnex.doctor.model import Check, CheckStatus
+from omnex.doctor.report import (
+    DoctorReport,
+    render_report_text,
+    report_to_dict,
+    run_doctor,
+)
 
 __all__ = [
     "Check",
     "CheckStatus",
+    "DoctorReport",
     "check_adapters",
     "check_extras",
     "check_metrics",
     "check_persistence",
     "check_registration",
+    "render_report_text",
+    "report_to_dict",
+    "run_doctor",
 ]
