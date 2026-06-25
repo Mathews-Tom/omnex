@@ -18,8 +18,10 @@ access, no background process, no upload.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import uuid
 from pathlib import Path
 
 # Environment overrides. ``OMNEX_HOME`` relocates the state directory (useful in
@@ -35,6 +37,11 @@ _SETTINGS_NAME = "settings.json"
 _LEDGER_NAME = "usage.sqlite"
 
 _METRICS_KEY = "usage_metrics"
+# Per-install random salt and the repo-id map. The salt makes the repo key a
+# non-reversible hash of the repo root; the map holds only random ids keyed by
+# that hash, so the repo path is never written to disk.
+_SALT_KEY = "metrics_salt"
+_REPOS_KEY = "repos"
 
 
 def omnex_home() -> Path:
@@ -103,3 +110,41 @@ def set_metrics_enabled(enabled: bool) -> None:
     settings = read_settings()
     settings[_METRICS_KEY] = enabled
     write_settings(settings)
+
+
+def _repo_root(start: Path) -> Path:
+    """The nearest enclosing git work tree, or START itself when there is none."""
+    resolved = start.resolve()
+    for candidate in (resolved, *resolved.parents):
+        if (candidate / ".git").exists():
+            return candidate
+    return resolved
+
+
+def repo_id(start: Path | None = None) -> str:
+    """A stable, anonymous per-repo id -- never the repo path.
+
+    The id is keyed by a salted hash of the repo root, so the same repo reuses one
+    random id across runs while the path itself is never written to disk. The salt
+    is a per-install random value and the id is random; both live in the settings
+    file, never in the ledger. START defaults to the current working directory.
+    """
+    settings = read_settings()
+    salt = settings.get(_SALT_KEY)
+    if not isinstance(salt, str):
+        salt = uuid.uuid4().hex
+    repos: dict[str, str] = {}
+    raw_repos = settings.get(_REPOS_KEY)
+    if isinstance(raw_repos, dict):
+        repos = {k: v for k, v in raw_repos.items() if isinstance(k, str) and isinstance(v, str)}
+    root = _repo_root(start if start is not None else Path.cwd())
+    key = hashlib.sha256(f"{salt}:{root}".encode()).hexdigest()[:16]
+    existing = repos.get(key)
+    if existing is not None:
+        return existing
+    new_id = uuid.uuid4().hex[:12]
+    repos[key] = new_id
+    settings[_SALT_KEY] = salt
+    settings[_REPOS_KEY] = repos
+    write_settings(settings)
+    return new_id

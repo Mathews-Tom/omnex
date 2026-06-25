@@ -40,6 +40,7 @@ from omnex.client_setup import (
     resolve_scope,
     write_client_install_plan,
 )
+from omnex.metrics import recorder
 
 
 def _render_json(bundle: ContextBundle, receipt: Receipt) -> str:
@@ -100,12 +101,14 @@ def index_command(paths: tuple[Path, ...]) -> None:
     (documents, units, references) it would index.
     """
     try:
-        documents, units, references = index_corpus(collect_files(paths))
+        files = collect_files(paths)
+        documents, units, references = index_corpus(files)
     except ValueError as exc:
         # Routing fails loud when a source is unclaimable or its content changed
         # since ingest; surface it as a clean CLI error, never a silent fallback.
         raise click.ClickException(str(exc)) from exc
     click.echo(f"indexed {documents} document(s), {units} unit(s), {references} reference(s)")
+    recorder.record_index(surface="cli", file_count=len(files))
 
 
 @main.command(name="query")
@@ -145,6 +148,7 @@ def query_command(corpus: Path, question: str, budget: int, output_format: str) 
         click.echo(_render_json(bundle, receipt))
     else:
         click.echo(_render_markdown(bundle, receipt))
+    recorder.record_query(surface="cli", receipt=receipt, bundle=bundle, file_count=len(sources))
 
 
 @main.command(name="install-client")
