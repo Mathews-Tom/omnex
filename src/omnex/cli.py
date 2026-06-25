@@ -41,6 +41,7 @@ from omnex.client_setup import (
     resolve_scope,
     write_client_install_plan,
 )
+from omnex.doctor import render_report_text, report_to_dict, run_doctor
 from omnex.metrics import recorder, settings, store, summary
 
 
@@ -285,3 +286,35 @@ def metrics_delete_command(yes: bool) -> None:
         click.confirm("Delete the local usage ledger?", abort=True)
     deleted = store.delete_ledger(settings.ledger_path())
     click.echo("Deleted the local usage ledger." if deleted else "No usage ledger to delete.")
+
+
+@main.command(name="doctor")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["text", "json"]),
+    default="text",
+    show_default=True,
+    help="Render the report as text or JSON.",
+)
+@click.option(
+    "--strict",
+    is_flag=True,
+    default=False,
+    help="Exit non-zero when any check is not ok.",
+)
+@click.pass_context
+def doctor_command(ctx: click.Context, output_format: str, strict: bool) -> None:
+    """Report installation and operational health.
+
+    Covers MCP registration, the usage-metrics ledger state, installed extras,
+    adapter sanity, and the persistence mode. With ``--strict`` the command exits
+    non-zero when any check is not ``ok`` -- usable as a health gate.
+    """
+    report = run_doctor()
+    if output_format == "json":
+        click.echo(json.dumps(report_to_dict(report), indent=2, sort_keys=True))
+    else:
+        click.echo(render_report_text(report))
+    if strict and not report.healthy:
+        ctx.exit(1)
