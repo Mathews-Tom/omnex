@@ -202,6 +202,31 @@ def write_client_install_plan(plan: ClientInstallPlan) -> Path:
     return _write_json_plan(target, plan.client, plan.content)
 
 
+def is_registered(
+    client: ClientName,
+    source: str | Path | None = None,
+    *,
+    scope: ClientScope = "user",
+) -> bool:
+    """Whether the ``omnex`` MCP server entry is present in CLIENT's config.
+
+    Resolves CLIENT's config target through the same registry the writer uses --
+    so registration health never re-derives a client's config path or shape -- and
+    reports whether that file already declares the ``omnex`` server. A missing,
+    unreadable, or unparseable file, or one without the entry, all read as
+    unregistered.
+    """
+    plan = build_client_install_plan(client, source, scope=scope)
+    target = plan.target_path
+    try:
+        text = target.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    if _is_toml_plan(plan):
+        return f"[mcp_servers.{_SERVER_NAME}]" in text
+    return _json_entry_present(text, client)
+
+
 def _write_toml_plan(target: Path, content: str) -> Path:
     block = content.strip()
     marker = f"[mcp_servers.{_SERVER_NAME}]"
@@ -334,6 +359,18 @@ def _render_content(client: ClientName) -> str:
 
 def _json_server_key(client: ClientName) -> str:
     return "mcp" if client == "opencode" else "mcpServers"
+
+
+def _json_entry_present(text: str, client: ClientName) -> bool:
+    """Whether parsed JSON config TEXT already declares the ``omnex`` server entry."""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return False
+    if not isinstance(data, dict):
+        return False
+    container = data.get(_json_server_key(client))
+    return isinstance(container, dict) and _SERVER_NAME in container
 
 
 def _is_toml_plan(plan: ClientInstallPlan) -> bool:
