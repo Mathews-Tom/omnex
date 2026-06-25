@@ -4,7 +4,7 @@
 
 ## 1. Status
 
-Pre-implementation design.
+Alpha (`0.1.0`), implemented. Shipped: the modality-agnostic IR and `StructureGraph`; the spec and prose adapters; the modality-blind kernel (FTS5/BM25F, RRF/RSF fusion, bounded graph expansion, T1 closure, the efficiency packer); the opt-in T2 vector lane; receipts; the labeled benchmark families; and the surfaces and adoption layer — Python library, CLI, MCP server, slim/full Docker images, LangChain/LlamaIndex retrievers, cross-client `install-client` registration, local usage metrics, and `doctor` diagnostics. The index is stateless (built in memory per call); see the persistence decision in the system design.
 
 ## 2. What it is
 
