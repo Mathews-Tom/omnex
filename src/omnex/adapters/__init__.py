@@ -24,6 +24,7 @@ __all__ = [
     "ModalityAdapter",
     "ProseAdapter",
     "SpecAdapter",
+    "available_adapters",
     "select_adapter",
 ]
 
@@ -34,3 +35,8 @@ def select_adapter(source: Path) -> ModalityAdapter:
         if adapter.claims(source):
             return adapter
     raise ValueError(f"no adapter claims source: {source}")
+
+
+def available_adapters() -> tuple[ModalityAdapter, ...]:
+    """The routing registry, in priority order -- the single source surfaces probe."""
+    return _ADAPTERS
