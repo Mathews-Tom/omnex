@@ -115,7 +115,7 @@ uv tool install "omnex[embed] @ git+https://github.com/Mathews-Tom/omnex"
 uv tool install "omnex[mcp] @ git+https://github.com/Mathews-Tom/omnex"
 ```
 
-Extras: `embed` (T2 local embeddings via `fastembed`), `mcp` (MCP stdio server), `bench` (chunk-and-embed benchmark baseline; pulls `embed`). The core install pulls only `networkx`, `tiktoken`, and `click` — importing `omnex` loads no model, opens no socket, and reads no file.
+Extras: `embed` (T2 local embeddings via `fastembed`), `mcp` (MCP stdio server), `langchain` (LangChain retriever), `bench` (chunk-and-embed benchmark baseline; pulls `embed`). The core install pulls only `networkx`, `tiktoken`, and `click` — importing `omnex` loads no model, opens no socket, and reads no file.
 
 ## Quickstart (CLI)
 
@@ -193,6 +193,27 @@ omnex install-client omp --agent-file ~/.omp/agent/AGENTS.md  # also append agen
 `--scope` selects user/global (default) or repo-local `project`; Pi and oh-my-pi are user-only. `--dry-run` prints the resolved target and config and writes nothing. `--agent-file` appends a ready-to-paste, idempotent guidance block so agents reach for the `index`/`query` MCP tools instead of only the CLI.
 
 **Registration is not surfacing is not invocation.** Writing the config registers the server; a harness still has to surface its tools to the agent (harnesses with on-demand tool discovery keep them hidden until activated), and the agent still has to choose them over reading files by hand — which is what `--agent-file` nudges.
+
+## RAG framework retrievers
+
+omnex plugs into existing RAG stacks as a retriever, behind extras — the core install pulls neither framework. Build the kernel once (`index` for in-memory IR, `index_sources` for files), then wrap it; each query returns the framework's document type carrying omnex's packed chunks and the run's receipt as provenance under `omnex_receipt`. Ranking and the returned set are exactly omnex's.
+
+```python
+from pathlib import Path
+from omnex import index_sources, KernelConfig
+from omnex.integrations.langchain import OmnexRetriever  # needs the [langchain] extra
+
+cfg = KernelConfig(
+    tier="T0", bm25_profile={"text": 1.0, "title": 2.0},
+    hop_budget_by_kind={}, confidence_decay=0.9,
+    enable_vector_lane=False, enable_rerank=False,
+)
+kernel = index_sources([Path("docs/")])
+retriever = OmnexRetriever(kernel=kernel, config=cfg, budget_tokens=2000)
+
+docs = retriever.invoke("configure TLS for the ingress")
+print(docs[0].page_content, docs[0].metadata["omnex_receipt"]["determinism_class"])
+```
 
 ## Measured results
 
