@@ -8,10 +8,13 @@ usage-metrics home and forces metrics off.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
+from click.testing import CliRunner
 
+from omnex.cli import main
 from omnex.client_setup import build_client_install_plan, is_registered, write_client_install_plan
 from omnex.doctor.checks import (
     _extra_installed,
@@ -21,6 +24,8 @@ from omnex.doctor.checks import (
     check_persistence,
     check_registration,
 )
+from omnex.doctor.model import Check
+from omnex.doctor.report import DoctorReport, render_report_text, report_to_dict, run_doctor
 from omnex.metrics import settings, store
 
 
@@ -162,3 +167,101 @@ def test_check_persistence_reports_stateless() -> None:
     assert check.status == "ok"
     assert check.details["mode"] == "stateless"
     assert "stateless" in check.summary
+
+
+# --- report assembly ------------------------------------------------------------
+
+
+def test_run_doctor_runs_every_check() -> None:
+    report = run_doctor()
+    names = [check.name for check in report.checks]
+    assert names == ["registration", "metrics", "extras", "adapters", "persistence"]
+
+
+def test_report_status_is_worst_and_healthy_only_when_all_ok() -> None:
+    ok = Check(name="a", status="ok", summary="")
+    warn = Check(name="b", status="warn", summary="")
+    error = Check(name="c", status="error", summary="")
+    assert DoctorReport(checks=(ok, ok)).status == "ok"
+    assert DoctorReport(checks=(ok, ok)).healthy is True
+    assert DoctorReport(checks=(ok, warn)).status == "warn"
+    assert DoctorReport(checks=(ok, warn)).healthy is False
+    assert DoctorReport(checks=(warn, error)).status == "error"
+    assert DoctorReport(checks=(ok, warn, error)).status == "error"
+
+
+def test_report_to_dict_shape() -> None:
+    report = DoctorReport(checks=(Check(name="x", status="ok", summary="fine", details={"k": 1}),))
+    payload = report_to_dict(report)
+    assert payload["healthy"] is True
+    assert payload["status"] == "ok"
+    expected = {"name": "x", "status": "ok", "summary": "fine", "details": {"k": 1}}
+    assert payload["checks"] == [expected]
+
+
+def test_render_report_text_marks_status_and_verdict() -> None:
+    report = DoctorReport(checks=(Check(name="x", status="warn", summary="pending"),))
+    text = render_report_text(report)
+    assert "[warn] x: pending" in text
+    assert "Overall: unhealthy (warn)" in text
+
+
+# --- doctor command: json, text, strict -----------------------------------------
+
+
+def test_doctor_json_schema() -> None:
+    result = CliRunner().invoke(main, ["doctor", "--format", "json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert set(payload) == {"healthy", "status", "checks"}
+    assert isinstance(payload["healthy"], bool)
+    assert payload["status"] in {"ok", "warn", "error"}
+    checks = payload["checks"]
+    assert {check["name"] for check in checks} == {
+        "registration",
+        "metrics",
+        "extras",
+        "adapters",
+        "persistence",
+    }
+    for check in checks:
+        assert set(check) == {"name", "status", "summary", "details"}
+        assert check["status"] in {"ok", "warn", "error"}
+        assert isinstance(check["summary"], str)
+        assert isinstance(check["details"], dict)
+
+
+def test_doctor_text_output_lists_checks_and_verdict() -> None:
+    result = CliRunner().invoke(main, ["doctor"])
+    assert result.exit_code == 0, result.output
+    for name in ("registration", "metrics", "extras", "adapters", "persistence"):
+        assert name in result.output
+    assert "Overall:" in result.output
+
+
+def test_doctor_json_reports_stateless_persistence() -> None:
+    result = CliRunner().invoke(main, ["doctor", "--format", "json"])
+    payload = json.loads(result.output)
+    persistence = next(check for check in payload["checks"] if check["name"] == "persistence")
+    assert persistence["details"]["mode"] == "stateless"
+
+
+def test_doctor_strict_exits_nonzero_when_unhealthy() -> None:
+    # Fresh home: no MCP client registered -> registration warns -> unhealthy.
+    result = CliRunner().invoke(main, ["doctor", "--strict"])
+    assert result.exit_code == 1
+    assert "Overall: unhealthy" in result.output
+
+
+def test_doctor_strict_exits_zero_when_healthy() -> None:
+    write_client_install_plan(build_client_install_plan("omp", scope="user"))
+    result = CliRunner().invoke(main, ["doctor", "--strict"])
+    assert result.exit_code == 0, result.output
+    assert "Overall: healthy" in result.output
+
+
+def test_doctor_json_strict_emits_report_then_exits() -> None:
+    result = CliRunner().invoke(main, ["doctor", "--format", "json", "--strict"])
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    assert payload["healthy"] is False
