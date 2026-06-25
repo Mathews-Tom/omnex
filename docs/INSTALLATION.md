@@ -7,7 +7,7 @@ This document states what omnex needs to run, how to install it today, what it r
 - Python 3.12 or newer
 - [`uv`](https://docs.astral.sh/uv/)
 
-omnex is not published to PyPI yet. PyPI publication is on the roadmap, so installs use the GitHub git URL today.
+omnex is published to PyPI, so the commands below install released versions directly. To install the latest unreleased build instead, use the GitHub git URL spec shown under [From source (unreleased)](#from-source-unreleased).
 
 ## Install methods
 
@@ -15,31 +15,40 @@ omnex is not published to PyPI yet. PyPI publication is on the roadmap, so insta
 
 ```bash
 # Core install: CLI + Python library, with the byte-exact default path.
-uv tool install "omnex @ git+https://github.com/Mathews-Tom/omnex"
+uv tool install omnex
 
 # Optional T2 local embedding lane.
-uv tool install "omnex[embed] @ git+https://github.com/Mathews-Tom/omnex"
+uv tool install "omnex[embed]"
 
 # Optional stdio MCP server.
-uv tool install "omnex[mcp] @ git+https://github.com/Mathews-Tom/omnex"
+uv tool install "omnex[mcp]"
 
 # Optional LangChain retriever integration.
-uv tool install "omnex[langchain] @ git+https://github.com/Mathews-Tom/omnex"
+uv tool install "omnex[langchain]"
 
 # Optional LlamaIndex retriever integration.
-uv tool install "omnex[llamaindex] @ git+https://github.com/Mathews-Tom/omnex"
+uv tool install "omnex[llamaindex]"
 ```
 
 ### Project dependency install
 
-If you want omnex in a project environment instead of a global tool, use `uv add` with the same git URL spec:
+If you want omnex in a project environment instead of a global tool, add it with `uv add`:
 
 ```bash
-uv add "omnex @ git+https://github.com/Mathews-Tom/omnex"
-uv add "omnex[mcp] @ git+https://github.com/Mathews-Tom/omnex"
+uv add omnex
+uv add "omnex[mcp]"
 ```
 
 The same `uv add` pattern works for the optional `embed`, `langchain`, and `llamaindex` extras.
+
+### From source (unreleased)
+
+To install the latest unreleased build from `main`, use the GitHub git URL spec with either command:
+
+```bash
+uv tool install "omnex @ git+https://github.com/Mathews-Tom/omnex"
+uv add "omnex @ git+https://github.com/Mathews-Tom/omnex"
+```
 
 ## Extras matrix
 

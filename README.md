@@ -108,14 +108,16 @@ Requires **Python 3.12+**. Uses [`uv`](https://docs.astral.sh/uv/).
 
 ```bash
 # Core (T0/T1 — byte-exact, model-free)
-uv tool install "omnex @ git+https://github.com/Mathews-Tom/omnex"
+uv tool install omnex
 
 # With the opt-in T2 vector lane
-uv tool install "omnex[embed] @ git+https://github.com/Mathews-Tom/omnex"
+uv tool install "omnex[embed]"
 
 # With the MCP server surface
-uv tool install "omnex[mcp] @ git+https://github.com/Mathews-Tom/omnex"
+uv tool install "omnex[mcp]"
 ```
+
+To add omnex as a project dependency, use `uv add omnex` (with extras as `uv add "omnex[embed]"`). Install the latest unreleased build from source with `uv tool install "omnex @ git+https://github.com/Mathews-Tom/omnex"`.
 
 Extras: `embed` (T2 local embeddings via `fastembed`), `mcp` (MCP stdio server), `langchain` / `llamaindex` (RAG framework retrievers), `bench` (chunk-and-embed benchmark baseline; pulls `embed`). The core install pulls only `networkx`, `tiktoken`, and `click` — importing `omnex` loads no model, opens no socket, and reads no file.
 
@@ -372,14 +374,13 @@ Honesty discipline baked into the families: two baselines (full-dump upper bound
 
 ## Status & roadmap
 
-**Alpha (`0.1.0`).** Shipped: the modality-agnostic IR + `StructureGraph`; spec and prose adapters; the modality-blind kernel (FTS5/BM25F, RRF/RSF fusion, bounded graph expansion, T1 closure, the efficiency packer); the opt-in T2 vector lane; receipts; the labeled spec + prose benchmark families; and the surfaces and adoption layer — library, CLI, MCP, slim/full Docker images, LangChain/LlamaIndex retrievers, cross-client `install-client` registration, local usage metrics, and `doctor` diagnostics.
+**Alpha (`0.1.0`), published to [PyPI](https://pypi.org/project/omnex/).** Shipped: the modality-agnostic IR + `StructureGraph`; spec and prose adapters; the modality-blind kernel (FTS5/BM25F, RRF/RSF fusion, bounded graph expansion, T1 closure, the efficiency packer); the opt-in T2 vector lane; receipts; the labeled spec + prose benchmark families; and the surfaces and adoption layer — library, CLI, MCP, slim/full Docker images, LangChain/LlamaIndex retrievers, cross-client `install-client` registration, local usage metrics, and `doctor` diagnostics.
 
 Roadmap, each as its own spec → plan → implementation cycle:
 
 - **T3** model-extraction lane (OCR for scanned PDF; caption/transcribe).
 - **Code adapter** (tree-sitter → `FUNCTION`/`CLASS` units, `IMPORTS`/`CALLS` edges) — the seam for an eventual archex-on-omnex migration.
 - **Mixed-corpus cross-modality linking** (prose ↔ code).
-- **PyPI publication** for `uv tool install omnex`.
 
 ## Independence from archex
 
