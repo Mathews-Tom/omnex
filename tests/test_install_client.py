@@ -20,6 +20,7 @@ from omnex.client_setup import (
     ALL_CLIENTS,
     ClientName,
     build_client_install_plan,
+    render_client_install_preview,
     resolve_scope,
     write_client_install_plan,
 )
@@ -211,3 +212,37 @@ def test_command_user_only_client_rejects_project_scope() -> None:
 def test_command_rejects_unknown_client() -> None:
     result = CliRunner().invoke(main, ["install-client", "nano"])
     assert result.exit_code != 0
+
+
+def test_render_preview_includes_scope_target_and_content() -> None:
+    plan = build_client_install_plan("claude-code", scope="user")
+    preview = render_client_install_preview(plan)
+    assert "Client: claude-code" in preview
+    assert "Scope: user" in preview
+    assert str(plan.target_path) in preview
+    assert "omnex-mcp" in preview
+    assert "Dry run." in preview
+
+
+def test_dry_run_writes_no_file(home: Path) -> None:
+    result = CliRunner().invoke(main, ["install-client", "claude-code", "--dry-run"])
+    assert result.exit_code == 0, result.output
+    target = home / ".claude.json"
+    assert str(target) in result.output
+    assert "omnex-mcp" in result.output
+    assert "Dry run." in result.output
+    assert not target.exists()
+
+
+def test_dry_run_project_scope_writes_no_file(tmp_path: Path) -> None:
+    root = tmp_path.resolve()
+    result = CliRunner().invoke(main, ["install-client", "cursor", str(root), "--dry-run"])
+    assert result.exit_code == 0, result.output
+    assert not (root / ".cursor" / "mcp.json").exists()
+
+
+def test_dry_run_codex_previews_toml_without_writing(home: Path) -> None:
+    result = CliRunner().invoke(main, ["install-client", "codex", "--dry-run"])
+    assert result.exit_code == 0, result.output
+    assert "[mcp_servers.omnex]" in result.output
+    assert not (home / ".codex" / "config.toml").exists()
