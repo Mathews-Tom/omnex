@@ -14,6 +14,7 @@ surface drives.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from pathlib import Path
 from typing import cast
@@ -40,7 +41,7 @@ from omnex.client_setup import (
     resolve_scope,
     write_client_install_plan,
 )
-from omnex.metrics import recorder
+from omnex.metrics import recorder, settings, store, summary
 
 
 def _render_json(bundle: ContextBundle, receipt: Receipt) -> str:
@@ -211,3 +212,61 @@ def install_client_command(
                 click.echo(f"omnex MCP guidance already present: {agent_path}")
     except (ValueError, OSError) as exc:
         raise click.ClickException(str(exc)) from exc
+
+
+@main.group(name="metrics")
+def metrics_group() -> None:
+    """Inspect and manage the local, off-by-default usage ledger.
+
+    These commands are CLI-only: the MCP server exposes no metrics tools, so an
+    agent can route retrieval through omnex but cannot read, change, or delete the
+    operator's local metrics state. The ledger never leaves the machine.
+    """
+
+
+@metrics_group.command(name="enable")
+@click.option("--on/--off", "on", default=True, help="Turn usage recording on (default) or off.")
+def metrics_enable_command(on: bool) -> None:
+    """Persist whether usage recording is on.
+
+    OMNEX_USAGE_METRICS still overrides this per session.
+    """
+    settings.set_metrics_enabled(on)
+    click.echo(f"Usage metrics {'enabled' if on else 'disabled'}.")
+
+
+@metrics_group.command(name="summary")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["text", "json"]),
+    default="text",
+    show_default=True,
+    help="Render the summary as text or JSON.",
+)
+def metrics_summary_command(output_format: str) -> None:
+    """Report token savings and the CLI-vs-MCP surface split from the local ledger."""
+    events = store.read_events(settings.ledger_path())
+    report = summary.build_summary(events, enabled=settings.metrics_enabled())
+    if output_format == "json":
+        click.echo(json.dumps(summary.summary_to_dict(report), indent=2, sort_keys=True))
+    else:
+        click.echo(summary.render_summary_text(report))
+
+
+@metrics_group.command(name="export")
+def metrics_export_command() -> None:
+    """Export every recorded event as JSON -- anonymous counters only."""
+    events = store.read_events(settings.ledger_path())
+    payload = {"events": [dataclasses.asdict(event) for event in events]}
+    click.echo(json.dumps(payload, indent=2, sort_keys=True))
+
+
+@metrics_group.command(name="delete")
+@click.option("--yes", is_flag=True, default=False, help="Delete without confirmation.")
+def metrics_delete_command(yes: bool) -> None:
+    """Delete the local usage ledger. The enable setting is left unchanged."""
+    if not yes:
+        click.confirm("Delete the local usage ledger?", abort=True)
+    deleted = store.delete_ledger(settings.ledger_path())
+    click.echo("Deleted the local usage ledger." if deleted else "No usage ledger to delete.")
