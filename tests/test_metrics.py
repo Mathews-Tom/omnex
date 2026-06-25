@@ -16,7 +16,7 @@ import pytest
 
 import omnex
 from omnex._surface import default_config
-from omnex.metrics import recorder, settings, store
+from omnex.metrics import recorder, savings, settings, store
 from omnex.metrics.store import UsageEvent
 
 _FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -228,3 +228,71 @@ def test_distinct_repos_get_distinct_ids(tmp_path: Path) -> None:
     right = tmp_path / "right"
     right.mkdir()
     assert settings.repo_id(left) != settings.repo_id(right)
+
+
+def _ev(returned: int, baseline: int, *, tool: str = "query") -> UsageEvent:
+    """A usage event carrying given token counts; defaults to a query event."""
+    return _event(returned_tokens=returned, baseline_tokens=baseline, tool=tool)
+
+
+def test_savings_of_no_events_is_all_zero() -> None:
+    result = savings.compute_savings([])
+    assert result == savings.Savings(0, 0, 0, 0, 0, 0)
+    assert result.full_file_paste_pct == 0.0
+    assert result.targeted_read_pct == 0.0
+
+
+def test_single_query_savings_math() -> None:
+    multiple = savings.TARGETED_READ_MULTIPLE
+    targeted_baseline = min(1000, 100 * multiple)
+    result = savings.compute_savings([_ev(returned=100, baseline=1000)])
+    assert result.events == 1
+    assert result.returned_tokens == 100
+    assert result.whole_corpus_tokens == 1000
+    assert result.full_file_paste_avoided == 900
+    assert result.targeted_read_baseline == targeted_baseline
+    assert result.targeted_read_avoided == targeted_baseline - 100
+    assert result.full_file_paste_pct == round(100.0 * 900 / 1000, 1)
+    assert result.targeted_read_pct == round(
+        100.0 * (targeted_baseline - 100) / targeted_baseline, 1
+    )
+
+
+def test_savings_aggregate_across_events() -> None:
+    events = [_ev(returned=100, baseline=1000), _ev(returned=50, baseline=400)]
+    result = savings.compute_savings(events)
+    assert result.events == 2
+    assert result.returned_tokens == 150
+    assert result.whole_corpus_tokens == 1400
+    assert result.full_file_paste_avoided == 900 + 350
+
+
+def test_index_events_carry_no_savings() -> None:
+    query_only = savings.compute_savings([_ev(returned=100, baseline=1000)])
+    with_index = savings.compute_savings(
+        [_ev(returned=100, baseline=1000), _ev(returned=0, baseline=0, tool="index")]
+    )
+    assert with_index == query_only
+
+
+def test_targeted_read_is_capped_at_the_full_file() -> None:
+    # returned * multiple exceeds the full document, so a targeted read can only
+    # cost the whole file: the targeted figure collapses onto the full-file paste.
+    result = savings.compute_savings([_ev(returned=400, baseline=1000)])
+    assert result.targeted_read_baseline == result.whole_corpus_tokens
+    assert result.targeted_read_avoided == result.full_file_paste_avoided
+
+
+def test_savings_never_go_negative() -> None:
+    # A degenerate event where returned exceeds baseline must clamp to zero, never
+    # report a negative saving.
+    result = savings.compute_savings([_ev(returned=1000, baseline=500)])
+    assert result.full_file_paste_avoided == 0
+    assert result.targeted_read_avoided == 0
+
+
+def test_targeted_read_never_exceeds_full_file_paste() -> None:
+    events = [_ev(returned=120, baseline=4000), _ev(returned=300, baseline=900)]
+    result = savings.compute_savings(events)
+    assert result.targeted_read_avoided <= result.full_file_paste_avoided
+    assert result.full_file_paste_avoided <= result.whole_corpus_tokens
