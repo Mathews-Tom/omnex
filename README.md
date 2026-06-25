@@ -401,8 +401,24 @@ CI runs the same four gates on every push and PR. Standards: Python 3.12, `from 
 
 ## Documentation
 
+**Get started**
+- [Installation](docs/INSTALLATION.md) — install methods, extras, Docker, what omnex reads/writes, network behavior, uninstall.
+- [Usage](docs/USAGE.md) — end-to-end guide across the CLI, Python API, MCP server, and RAG retrievers.
+
+**Reference**
+- [Receipts](docs/RECEIPTS.md) — the auditable receipt contract: fields, determinism classes, recall basis.
+- [Local metrics](docs/LOCAL_METRICS.md) — the off-by-default usage ledger, savings math, and the privacy boundary.
+- [Client compatibility](docs/CLIENT_COMPATIBILITY.md) — `install-client` targets, config shapes, and scopes for all six clients.
+
+**Design**
 - [System overview](docs/system-overview.md) — what, why (context rot, token economics), market framing.
 - [System design](docs/system-design.md) — IR contract, adapter Protocol, kernel internals, tier semantics.
+- [Roadmap](docs/ROADMAP.md) — shipped in 0.1.0 vs planned, and the principles guiding future work.
+
+**Project**
+- [Contributing](CONTRIBUTING.md) — local workflow, gates, coding standards, and the adapter contract.
+- [Security](SECURITY.md) — security posture and how to report a vulnerability.
+- [Changelog](CHANGELOG.md) — release history.
 
 ## License
 
