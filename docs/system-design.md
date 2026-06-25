@@ -323,9 +323,9 @@ flowchart TD
     B[Python library]
     C[click CLI]
     D[MCP server]
-    E[Index corpus once]
-    F[Persist IR index and StructureGraph]
-    G[Submit query and budget]
+    E[Submit query and budget]
+    F[Build FTS index and StructureGraph in memory]
+    G[Retrieve, fuse, expand, pack]
     H[Read ContextBundle]
     I[Inspect Receipt]
 
@@ -338,7 +338,7 @@ flowchart TD
     E --> F --> G --> H --> I
 ```
 
-The developer workflow is the same across surfaces: index a corpus once, query under a budget, and inspect the `Receipt` when validating determinism class, included units, token counts, adapter choices, or `extraction=absent` failures.
+The developer workflow is the same across surfaces: submit a query under a budget against a corpus, and inspect the `Receipt` when validating determinism class, included units, token counts, adapter choices, or `extraction=absent` failures. The in-memory index and `StructureGraph` are built per call and discarded when the call returns; nothing is persisted (see §10).
 
 ## 9. Worked structural example
 
@@ -370,6 +370,20 @@ T0 and T1 are byte-exact retrieval classes. Given the same content hash, config,
 T2 is a different determinism class. It is reproducible only with a pinned embedding model, tokenizer, runtime, and architecture. The `Receipt` must label that class explicitly so users do not read a T0 or T1 guarantee into a vector-assisted run.
 
 T3 is model-versioned rather than byte-exact. Extraction outputs are cached by content hash plus model version, and the cache key must include the extraction model identity because OCR or transcription changes can alter the emitted IR even when the raw source bytes do not.
+
+### Persistence model — stateless (decided)
+
+omnex is **stateless**. Both `index` and `query` build the FTS index and `StructureGraph` in memory on every call and discard them; there is no `.omnex/` folder, no on-disk index, and no persisted cache. `index` validates and reports the corpus shape it *would* index — it does not persist one. This is a deliberate choice over the archex-style persist-then-serve model (a repo-local index served through an `init`/`index`/`status` lifecycle).
+
+The decision turns on three tradeoffs:
+
+- **Cold-start vs warm-query latency.** Stateless pays the full index build on every query; a persisted index would amortize that into warm queries. Accepted, because the per-query build cost is bounded and *correct*, and the warm-query win is recoverable later via an in-process, intra-session cache that never touches disk — so it does not require persistence.
+- **On-disk schema versioning.** A persisted artifact is a long-lived format that must be versioned, migrated, and load-rejected across releases. Statelessness has no on-disk format to version.
+- **Cache invalidation.** A persisted index goes stale when sources change, making staleness detection (content hashing, dirty detection, revisions) a permanent correctness surface. A per-call rebuild is fresh by construction and has no invalidation surface — which protects the byte-exact T0/T1 determinism guarantee from silent staleness.
+
+Net: stateless accepts higher per-query compute in exchange for eliminating the entire schema-versioning and cache-invalidation surface, and for a minimal failure and security footprint — omnex writes no index to a user's disk.
+
+This gates the operational roadmap. A persisted `.omnex/` lifecycle (`init`/`index`/`status`, a freshness/revision model, and `freshness`/`index_revision` receipt fields) is **not built**: it was conditional on choosing "persisted," so it is dropped and the `Receipt` schema is unchanged. Health diagnostics (`doctor`) report persistence mode as `stateless` and omit any index-presence, staleness, revision, or disk-usage section. Integration retrievers (LangChain/LlamaIndex) and Docker images are unaffected: they wrap the stateless `query` path and ship the stateless engine, introducing no persistence assumptions. (In `.docs/DEVELOPMENT_PLAN.md` terms: M4 is dropped, M5 reports stateless mode, and M6 is unaffected.)
 
 ## 11. Boundaries and error handling
 
