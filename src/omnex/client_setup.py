@@ -89,6 +89,24 @@ def build_client_install_plan(
     )
 
 
+def resolve_scope(
+    client: ClientName,
+    source: str | Path | None,
+    scope: ClientScope | None,
+) -> ClientScope:
+    """Resolve the effective install scope from the flag, the source, and CLIENT.
+
+    An explicit SCOPE always wins. Otherwise a user-only client (``pi``/``omp``)
+    is ``user``, and any other client is ``project`` when a SOURCE path is given
+    (a repo-local install) or ``user``/global by default.
+    """
+    if scope is not None:
+        return scope
+    if client in _USER_ONLY_CLIENTS:
+        return "user"
+    return "project" if source is not None else "user"
+
+
 def write_client_install_plan(plan: ClientInstallPlan) -> Path:
     """Write PLAN's config, merging the ``omnex`` entry into any existing file.
 

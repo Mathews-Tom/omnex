@@ -13,11 +13,14 @@ import tomllib
 from pathlib import Path
 
 import pytest
+from click.testing import CliRunner
 
+from omnex.cli import main
 from omnex.client_setup import (
     ALL_CLIENTS,
     ClientName,
     build_client_install_plan,
+    resolve_scope,
     write_client_install_plan,
 )
 
@@ -150,3 +153,61 @@ def test_client_schema_is_injected(client: ClientName, schema_marker: str, home:
     target = write_client_install_plan(build_client_install_plan(client, scope="user"))
     data = json.loads(target.read_text(encoding="utf-8"))
     assert schema_marker in data["$schema"]
+
+
+def test_resolve_scope_defaults_to_user_without_source() -> None:
+    assert resolve_scope("claude-code", None, None) == "user"
+
+
+def test_resolve_scope_selects_project_for_source() -> None:
+    assert resolve_scope("claude-code", "/repo", None) == "project"
+
+
+def test_resolve_scope_explicit_flag_wins_over_source() -> None:
+    assert resolve_scope("claude-code", "/repo", "user") == "user"
+
+
+@pytest.mark.parametrize("client", ["pi", "omp"])
+def test_resolve_scope_user_only_clients_ignore_source(client: ClientName) -> None:
+    assert resolve_scope(client, "/repo", None) == "user"
+
+
+def test_command_writes_user_config(home: Path) -> None:
+    result = CliRunner().invoke(main, ["install-client", "claude-code"])
+    assert result.exit_code == 0, result.output
+    target = home / ".claude.json"
+    assert "Wrote claude-code config" in result.output
+    assert str(target) in result.output
+    assert _omnex_command("claude-code", target) == "omnex-mcp"
+
+
+def test_command_default_scope_is_user(home: Path) -> None:
+    result = CliRunner().invoke(main, ["install-client", "cursor"])
+    assert result.exit_code == 0, result.output
+    assert (home / ".cursor" / "mcp.json").exists()
+
+
+def test_command_source_selects_project_scope(tmp_path: Path) -> None:
+    root = tmp_path.resolve()
+    result = CliRunner().invoke(main, ["install-client", "cursor", str(root)])
+    assert result.exit_code == 0, result.output
+    assert _omnex_command("cursor", root / ".cursor" / "mcp.json") == "omnex-mcp"
+
+
+def test_command_scope_flag_overrides_source(home: Path, tmp_path: Path) -> None:
+    root = tmp_path.resolve()
+    result = CliRunner().invoke(main, ["install-client", "cursor", str(root), "--scope", "user"])
+    assert result.exit_code == 0, result.output
+    assert (home / ".cursor" / "mcp.json").exists()
+    assert not (root / ".cursor" / "mcp.json").exists()
+
+
+def test_command_user_only_client_rejects_project_scope() -> None:
+    result = CliRunner().invoke(main, ["install-client", "pi", "--scope", "project"])
+    assert result.exit_code != 0
+    assert "only --scope user" in result.output
+
+
+def test_command_rejects_unknown_client() -> None:
+    result = CliRunner().invoke(main, ["install-client", "nano"])
+    assert result.exit_code != 0
