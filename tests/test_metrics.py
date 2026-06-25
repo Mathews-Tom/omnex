@@ -13,6 +13,7 @@ import asyncio
 import dataclasses
 import json
 import socket
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -520,3 +521,47 @@ def test_metrics_path_makes_no_network(monkeypatch: pytest.MonkeyPatch) -> None:
     summary.summary_to_dict(report)
     store.read_traces(settings.ledger_path())
     assert store.delete_ledger(settings.ledger_path()) is True
+
+
+def test_ledger_bytes_carry_no_corpus_unit_text() -> None:
+    # Beyond the question and path: a distinctive schema name present in the
+    # returned units must not leak into the ledger either.
+    settings.set_metrics_enabled(True)
+    bundle, receipt = _query()
+    assert "PaymentRequest" in bundle.render()
+    recorder.record_query(surface="cli", receipt=receipt, bundle=bundle, file_count=1)
+    assert b"PaymentRequest" not in settings.ledger_path().read_bytes()
+
+
+def test_recorder_isolates_a_ledger_write_failure(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    settings.set_metrics_enabled(True)
+    bundle, receipt = _query()
+
+    def _boom(*args: object, **kwargs: object) -> None:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(store, "insert_event", _boom)
+    # A failed ledger write must not propagate into the retrieval path...
+    recorder.record_query(surface="cli", receipt=receipt, bundle=bundle, file_count=1)
+    # ...but must be surfaced loudly on stderr, never silently swallowed.
+    assert "usage metrics not recorded" in capsys.readouterr().err
+
+
+def test_recorder_isolates_a_corrupt_settings_file() -> None:
+    # A torn or hand-edited settings.json must not crash query/index, even though
+    # the recorder reads it on the hot path of every run.
+    home = settings.omnex_home()
+    home.mkdir(parents=True, exist_ok=True)
+    settings.settings_path().write_text("{ not valid json", encoding="utf-8")
+    bundle, receipt = _query()
+    recorder.record_query(surface="cli", receipt=receipt, bundle=bundle, file_count=1)
+
+
+def test_write_settings_is_atomic_and_leaves_no_temp_file() -> None:
+    settings.set_metrics_enabled(True)
+    leftovers = [path.name for path in settings.omnex_home().iterdir() if path.suffix == ".tmp"]
+    assert leftovers == []
+    # The persisted file is always valid JSON, never a torn write.
+    json.loads(settings.settings_path().read_text(encoding="utf-8"))
