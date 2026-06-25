@@ -1,0 +1,27 @@
+name: Docker
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: docker-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  slim:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the slim image
+        run: docker build -f Dockerfile.slim -t omnex:slim .
+
+      - name: Smoke test the CLI help
+        run: docker run --rm omnex:slim --help
+
+      - name: Smoke test a query on a mounted fixture
+        run: |
+          docker run --rm -v "${{ github.workspace }}/tests/fixtures:/data:ro" omnex:slim \
+            query /data/payments_openapi.json "create payment" --budget 400
