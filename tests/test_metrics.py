@@ -9,14 +9,18 @@ clears the enable override, so nothing touches the real ``~/.omnex``.
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
+import json
 from pathlib import Path
 
 import pytest
+from click.testing import CliRunner
 
 import omnex
 from omnex._surface import default_config
-from omnex.metrics import recorder, savings, settings, store
+from omnex.cli import main
+from omnex.metrics import recorder, savings, settings, store, summary
 from omnex.metrics.store import UsageEvent
 
 _FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -296,3 +300,111 @@ def test_targeted_read_never_exceeds_full_file_paste() -> None:
     result = savings.compute_savings(events)
     assert result.targeted_read_avoided <= result.full_file_paste_avoided
     assert result.full_file_paste_avoided <= result.whole_corpus_tokens
+
+
+def _seed_events() -> None:
+    """Seed one cli and one mcp query event into the ledger."""
+    path = settings.ledger_path()
+    store.insert_event(path, _event(surface="cli", returned_tokens=100, baseline_tokens=1000))
+    store.insert_event(path, _event(surface="mcp", returned_tokens=50, baseline_tokens=400))
+
+
+def test_build_summary_splits_by_surface() -> None:
+    report = summary.build_summary(
+        [
+            _event(surface="cli", returned_tokens=100, baseline_tokens=1000),
+            _event(surface="mcp", returned_tokens=50, baseline_tokens=400),
+        ],
+        enabled=True,
+    )
+    assert report.total_events == 2
+    assert {b.surface for b in report.by_surface} == {"cli", "mcp"}
+    assert report.overall.full_file_paste_avoided == 1250
+
+
+def test_metrics_enable_command_persists_state() -> None:
+    runner = CliRunner()
+    assert runner.invoke(main, ["metrics", "enable"]).exit_code == 0
+    assert settings.metrics_enabled() is True
+    assert runner.invoke(main, ["metrics", "enable", "--off"]).exit_code == 0
+    assert settings.metrics_enabled() is False
+
+
+def test_summary_json_reports_overall_and_surface_split() -> None:
+    settings.set_metrics_enabled(True)
+    _seed_events()
+    result = CliRunner().invoke(main, ["metrics", "summary", "--format", "json"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["enabled"] is True
+    assert data["total_events"] == 2
+    assert set(data["by_surface"]) == {"cli", "mcp"}
+    assert data["by_surface"]["cli"]["events"] == 1
+    assert data["overall"]["full_file_paste_avoided"] == 1250
+    assert data["overall"]["whole_corpus_tokens"] == 1400
+    assert "targeted_read_avoided" in data["overall"]
+
+
+def test_summary_text_labels_headline_conservative_and_upper_bound() -> None:
+    settings.set_metrics_enabled(True)
+    _seed_events()
+    out = CliRunner().invoke(main, ["metrics", "summary"]).output
+    assert "[headline]" in out
+    assert "conservative" in out
+    assert "upper bound" in out
+    assert "cli:" in out
+    assert "mcp:" in out
+
+
+def test_export_round_trips_events() -> None:
+    settings.set_metrics_enabled(True)
+    _seed_events()
+    out = CliRunner().invoke(main, ["metrics", "export"]).output
+    payload = json.loads(out)
+    stored = [dataclasses.asdict(event) for event in store.read_events(settings.ledger_path())]
+    assert payload == {"events": stored}
+    assert len(payload["events"]) == 2
+
+
+def test_export_with_no_ledger_is_empty() -> None:
+    out = CliRunner().invoke(main, ["metrics", "export"]).output
+    assert json.loads(out) == {"events": []}
+
+
+def test_delete_removes_ledger_and_summary_resets() -> None:
+    settings.set_metrics_enabled(True)
+    _seed_events()
+    result = CliRunner().invoke(main, ["metrics", "delete", "--yes"])
+    assert result.exit_code == 0
+    assert not settings.ledger_path().exists()
+    data = json.loads(CliRunner().invoke(main, ["metrics", "summary", "--format", "json"]).output)
+    assert data["total_events"] == 0
+
+
+def test_delete_without_confirmation_keeps_ledger() -> None:
+    settings.set_metrics_enabled(True)
+    _seed_events()
+    result = CliRunner().invoke(main, ["metrics", "delete"], input="n\n")
+    assert result.exit_code != 0
+    assert settings.ledger_path().exists()
+
+
+def test_cli_query_records_and_summary_reports_end_to_end() -> None:
+    CliRunner().invoke(main, ["metrics", "enable"])
+    query = CliRunner().invoke(
+        main, ["query", str(_PAYMENTS), "create a payment", "--format", "json"]
+    )
+    assert query.exit_code == 0, query.output
+    data = json.loads(CliRunner().invoke(main, ["metrics", "summary", "--format", "json"]).output)
+    assert data["total_events"] == 1
+    assert data["by_surface"]["cli"]["events"] == 1
+    assert data["overall"]["full_file_paste_avoided"] > 0
+
+
+def test_mcp_server_exposes_no_metrics_tools() -> None:
+    # The CLI-vs-MCP split: metrics management is CLI-only. An agent can drive
+    # retrieval through MCP but cannot read, change, or delete the local ledger.
+    from omnex.mcp import server
+
+    names = {tool.name for tool in asyncio.run(server.list_tools())}
+    assert names == {"index", "query"}
