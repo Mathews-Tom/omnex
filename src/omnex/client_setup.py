@@ -107,6 +107,25 @@ def resolve_scope(
     return "project" if source is not None else "user"
 
 
+def render_client_install_preview(plan: ClientInstallPlan) -> str:
+    """Render PLAN as a human-readable dry-run preview that writes nothing.
+
+    Shows the resolved client, scope, target path, and description, followed by
+    the exact config content that a real install would write or merge.
+    """
+    lines = [
+        f"Client: {plan.client}",
+        f"Scope: {plan.scope}",
+        f"Target: {plan.target_path}",
+        f"Description: {_description(plan.client, plan.scope)}",
+        "",
+        "Dry run. Re-run without --dry-run to write this config.",
+        "",
+        plan.content.rstrip(),
+    ]
+    return "\n".join(lines) + "\n"
+
+
 def write_client_install_plan(plan: ClientInstallPlan) -> Path:
     """Write PLAN's config, merging the ``omnex`` entry into any existing file.
 
@@ -259,3 +278,17 @@ def _json_server_key(client: ClientName) -> str:
 
 def _is_toml_plan(plan: ClientInstallPlan) -> bool:
     return plan.client == "codex"
+
+
+def _description(client: ClientName, scope: ClientScope) -> str:
+    if client == "codex":
+        return "Codex CLI config.toml MCP server registration"
+    if client == "opencode":
+        return f"OpenCode {scope} config"
+    if client == "pi":
+        return "Pi agent MCP config"
+    if client == "omp":
+        return "oh-my-pi agent MCP config"
+    if client == "cursor":
+        return f"Cursor {scope} MCP config"
+    return f"Claude Code {scope} MCP config"

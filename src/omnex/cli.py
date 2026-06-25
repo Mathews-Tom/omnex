@@ -34,6 +34,7 @@ from omnex.client_setup import (
     ClientName,
     ClientScope,
     build_client_install_plan,
+    render_client_install_preview,
     resolve_scope,
     write_client_install_plan,
 )
@@ -153,13 +154,23 @@ def query_command(corpus: Path, question: str, budget: int, output_format: str) 
     default=None,
     help="Install scope. Default user/global; a SOURCE path or --scope project is repo-local.",
 )
-def install_client_command(client: str, source: str | None, scope: str | None) -> None:
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Preview the resolved target and config without writing anything.",
+)
+def install_client_command(
+    client: str, source: str | None, scope: str | None, dry_run: bool
+) -> None:
     """Write the MCP client configuration that registers the omnex-mcp server.
 
     CLIENT is one of the supported MCP clients; SOURCE is the repo root for a
     project-scope install (defaults to the current directory). The omnex entry
     is merged into the client's existing config without clobbering unrelated
     sections, so adopters do not hand-write MCP JSON for the existing server.
+    With --dry-run the resolved target and config are printed and nothing is
+    written to disk.
     """
     try:
         resolved_scope = resolve_scope(
@@ -168,6 +179,9 @@ def install_client_command(client: str, source: str | None, scope: str | None) -
             cast("ClientScope | None", scope),
         )
         plan = build_client_install_plan(cast("ClientName", client), source, scope=resolved_scope)
+        if dry_run:
+            click.echo(render_client_install_preview(plan), nl=False)
+            return
         target = write_client_install_plan(plan)
     except (ValueError, OSError) as exc:
         raise click.ClickException(str(exc)) from exc
