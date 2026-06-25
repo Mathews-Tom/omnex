@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import socket
 from pathlib import Path
 
 import pytest
@@ -408,3 +409,114 @@ def test_mcp_server_exposes_no_metrics_tools() -> None:
 
     names = {tool.name for tool in asyncio.run(server.list_tools())}
     assert names == {"index", "query"}
+
+
+def test_trace_off_by_default() -> None:
+    assert settings.trace_enabled() is False
+
+
+def test_trace_setting_round_trips() -> None:
+    settings.set_trace_enabled(True)
+    assert settings.trace_enabled() is True
+    settings.set_trace_enabled(False)
+    assert settings.trace_enabled() is False
+
+
+def test_trace_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OMNEX_USAGE_TRACE", "on")
+    assert settings.trace_enabled() is True
+
+
+def test_trace_requires_metrics_to_be_enabled() -> None:
+    # Trace on but recording off: the second opt-in never enables recording itself.
+    settings.set_trace_enabled(True)
+    bundle, receipt = _query()
+    recorder.record_query(surface="cli", receipt=receipt, bundle=bundle, file_count=1)
+    assert store.read_events(settings.ledger_path()) == []
+    assert store.read_traces(settings.ledger_path()) == []
+
+
+def test_event_without_trace_writes_no_trace() -> None:
+    settings.set_metrics_enabled(True)
+    bundle, receipt = _query()
+    recorder.record_query(surface="cli", receipt=receipt, bundle=bundle, file_count=1)
+    assert len(store.read_events(settings.ledger_path())) == 1
+    assert store.read_traces(settings.ledger_path()) == []
+
+
+def test_trace_records_anonymous_diagnostics() -> None:
+    settings.set_metrics_enabled(True)
+    settings.set_trace_enabled(True)
+    bundle, receipt = _query()
+    recorder.record_query(surface="cli", receipt=receipt, bundle=bundle, file_count=1)
+    traces = store.read_traces(settings.ledger_path())
+    assert len(traces) == 1
+    trace = traces[0]
+    assert trace.tool == "query"
+    assert trace.surface == "cli"
+    assert trace.tier == ",".join(receipt.tiers_run)
+    assert trace.determinism_class == receipt.determinism_class
+    assert trace.recall_basis == receipt.recall_basis
+    assert trace.reference_closure_complete == receipt.reference_closure_complete
+
+
+def test_trace_schema_has_no_source_or_output_fields() -> None:
+    names = {field.name for field in dataclasses.fields(store.UsageTrace)}
+    assert names == {
+        "occurred_at",
+        "tool",
+        "surface",
+        "repo_id",
+        "tier",
+        "determinism_class",
+        "recall_basis",
+        "reference_closure_complete",
+    }
+    assert names.isdisjoint({"question", "path", "corpus", "text", "output", "source", "content"})
+
+
+def test_trace_bytes_carry_no_question_or_path() -> None:
+    settings.set_metrics_enabled(True)
+    settings.set_trace_enabled(True)
+    bundle, receipt = _query()
+    recorder.record_query(surface="cli", receipt=receipt, bundle=bundle, file_count=1)
+    raw = settings.ledger_path().read_bytes()
+    assert b"ZZTOPSECRETMARKER" not in raw
+    assert str(_PAYMENTS).encode() not in raw
+    assert b"payments_openapi" not in raw
+
+
+def test_delete_removes_traces() -> None:
+    settings.set_metrics_enabled(True)
+    settings.set_trace_enabled(True)
+    bundle, receipt = _query()
+    recorder.record_query(surface="cli", receipt=receipt, bundle=bundle, file_count=1)
+    store.delete_ledger(settings.ledger_path())
+    assert store.read_traces(settings.ledger_path()) == []
+
+
+def test_metrics_trace_command_reflected_in_summary() -> None:
+    runner = CliRunner()
+    assert runner.invoke(main, ["metrics", "trace"]).exit_code == 0
+    data = json.loads(runner.invoke(main, ["metrics", "summary", "--format", "json"]).output)
+    assert data["trace_enabled"] is True
+    assert "Trace: on" in runner.invoke(main, ["metrics", "summary"]).output
+
+
+def test_metrics_path_makes_no_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings.set_metrics_enabled(True)
+    settings.set_trace_enabled(True)
+    # Build a real receipt before the patch (the kernel is out of scope here).
+    bundle, receipt = _query()
+
+    def _boom(*args: object, **kwargs: object) -> object:
+        raise AssertionError("the metrics path opened a network socket")
+
+    monkeypatch.setattr(socket, "socket", _boom)
+    monkeypatch.setattr(socket, "create_connection", _boom)
+    recorder.record_query(surface="cli", receipt=receipt, bundle=bundle, file_count=1)
+    events = store.read_events(settings.ledger_path())
+    report = summary.build_summary(events, enabled=True, trace_enabled=True)
+    summary.summary_to_dict(report)
+    store.read_traces(settings.ledger_path())
+    assert store.delete_ledger(settings.ledger_path()) is True
