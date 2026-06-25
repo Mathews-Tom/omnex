@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 ClientName = Literal["claude-code", "codex", "cursor", "opencode", "pi", "omp"]
 ClientScope = Literal["project", "user"]
@@ -89,6 +89,88 @@ def build_client_install_plan(
     )
 
 
+def write_client_install_plan(plan: ClientInstallPlan) -> Path:
+    """Write PLAN's config, merging the ``omnex`` entry into any existing file.
+
+    JSON clients merge an ``omnex`` server entry into the existing server map
+    without clobbering unrelated keys; Codex appends one ``[mcp_servers.omnex]``
+    TOML section. A re-run with an identical entry is an idempotent no-op; a
+    differing existing ``omnex`` entry is left untouched and the write fails
+    rather than overwrite it. Returns the written target path.
+    """
+    target = plan.target_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if _is_toml_plan(plan):
+        return _write_toml_plan(target, plan.content)
+    return _write_json_plan(target, plan.client, plan.content)
+
+
+def _write_toml_plan(target: Path, content: str) -> Path:
+    block = content.strip()
+    marker = f"[mcp_servers.{_SERVER_NAME}]"
+    if target.exists():
+        existing = target.read_text(encoding="utf-8")
+        if marker in existing:
+            if block in existing:
+                return target
+            raise ValueError(f"{_SERVER_NAME} already configured in {target}")
+        new_content = existing.rstrip() + "\n\n" + content if existing.strip() else content
+    else:
+        new_content = content
+    target.write_text(new_content, encoding="utf-8")
+    return target
+
+
+def _write_json_plan(target: Path, client: ClientName, content: str) -> Path:
+    key = _json_server_key(client)
+    payload_obj: object = json.loads(content)
+    if not isinstance(payload_obj, dict):
+        raise ValueError(f"expected JSON object in generated content for {client}")
+    payload = cast("dict[str, object]", payload_obj)
+
+    existing_payload: dict[str, object]
+    if target.exists():
+        existing_obj: object = json.loads(target.read_text(encoding="utf-8"))
+        if not isinstance(existing_obj, dict):
+            raise ValueError(f"expected JSON object in {target}")
+        existing_payload = cast("dict[str, object]", existing_obj)
+    else:
+        existing_payload = {}
+
+    raw_container = existing_payload.get(key)
+    if raw_container is None:
+        container: dict[str, object] = {}
+        existing_payload[key] = container
+    elif isinstance(raw_container, dict):
+        container = cast("dict[str, object]", raw_container)
+    else:
+        raise ValueError(f"expected object at {key!r} in {target}")
+
+    payload_container_obj = payload.get(key)
+    if not isinstance(payload_container_obj, dict):
+        raise ValueError(f"expected object at {key!r} in generated content for {client}")
+    payload_container = cast("dict[str, object]", payload_container_obj)
+
+    entry_obj = payload_container.get(_SERVER_NAME)
+    if not isinstance(entry_obj, dict):
+        raise ValueError(f"expected {_SERVER_NAME} entry in generated content for {client}")
+    entry = cast("dict[str, object]", entry_obj)
+
+    existing_entry = container.get(_SERVER_NAME)
+    if existing_entry is not None:
+        if existing_entry == entry:
+            return target
+        raise ValueError(f"{_SERVER_NAME} already configured in {target}")
+    container[_SERVER_NAME] = entry
+
+    schema = _CLIENT_SCHEMA.get(client)
+    if schema is not None and "$schema" not in existing_payload:
+        existing_payload["$schema"] = schema
+
+    target.write_text(json.dumps(existing_payload, indent=2) + "\n", encoding="utf-8")
+    return target
+
+
 def _target_path(client: ClientName, repo_root: Path, scope: ClientScope) -> Path:
     home = Path.home()
     if client == "claude-code":
@@ -151,3 +233,11 @@ def _render_content(client: ClientName) -> str:
             }
         )
     return _json_document({"mcpServers": {_SERVER_NAME: _stdio_entry()}})
+
+
+def _json_server_key(client: ClientName) -> str:
+    return "mcp" if client == "opencode" else "mcpServers"
+
+
+def _is_toml_plan(plan: ClientInstallPlan) -> bool:
+    return plan.client == "codex"
