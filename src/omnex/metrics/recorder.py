@@ -37,21 +37,42 @@ def record_query(
 
     The token counts are copied verbatim from the receipt -- never recomputed from
     files or a model -- and the category is the bundle's coarse render style. The
-    question and the corpus path are never passed in and never stored.
+    question and the corpus path are never passed in and never stored. When the
+    separate trace opt-in is also on, an anonymous diagnostic trace is appended
+    alongside the event.
     """
     if not settings.metrics_enabled():
         return
-    event = store.UsageEvent(
-        occurred_at=_now(),
-        tool="query",
-        surface=surface,
-        category=bundle.dominant_style(),
-        returned_tokens=receipt.returned_tokens,
-        baseline_tokens=receipt.baseline_tokens,
-        file_count=file_count,
-        repo_id=settings.repo_id(),
+    occurred_at = _now()
+    repo_id = settings.repo_id()
+    ledger = settings.ledger_path()
+    store.insert_event(
+        ledger,
+        store.UsageEvent(
+            occurred_at=occurred_at,
+            tool="query",
+            surface=surface,
+            category=bundle.dominant_style(),
+            returned_tokens=receipt.returned_tokens,
+            baseline_tokens=receipt.baseline_tokens,
+            file_count=file_count,
+            repo_id=repo_id,
+        ),
     )
-    store.insert_event(settings.ledger_path(), event)
+    if settings.trace_enabled():
+        store.insert_trace(
+            ledger,
+            store.UsageTrace(
+                occurred_at=occurred_at,
+                tool="query",
+                surface=surface,
+                repo_id=repo_id,
+                tier=",".join(receipt.tiers_run),
+                determinism_class=receipt.determinism_class,
+                recall_basis=receipt.recall_basis,
+                reference_closure_complete=receipt.reference_closure_complete,
+            ),
+        )
 
 
 def record_index(*, surface: str, file_count: int) -> None:

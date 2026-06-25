@@ -33,12 +33,15 @@ class MetricsSummary:
     """The full summary: enable state, totals, overall savings, surface split."""
 
     enabled: bool
+    trace_enabled: bool
     total_events: int
     overall: Savings
     by_surface: tuple[SurfaceBreakdown, ...]
 
 
-def build_summary(events: Iterable[UsageEvent], *, enabled: bool) -> MetricsSummary:
+def build_summary(
+    events: Iterable[UsageEvent], *, enabled: bool, trace_enabled: bool = False
+) -> MetricsSummary:
     """Aggregate ``events`` into overall savings and a per-surface breakdown."""
     materialized = list(events)
     surfaces = sorted({event.surface for event in materialized})
@@ -52,6 +55,7 @@ def build_summary(events: Iterable[UsageEvent], *, enabled: bool) -> MetricsSumm
     )
     return MetricsSummary(
         enabled=enabled,
+        trace_enabled=trace_enabled,
         total_events=len(materialized),
         overall=compute_savings(materialized),
         by_surface=by_surface,
@@ -76,6 +80,7 @@ def summary_to_dict(summary: MetricsSummary) -> dict[str, object]:
     """A JSON-serializable mapping of the whole summary, surface split included."""
     return {
         "enabled": summary.enabled,
+        "trace_enabled": summary.trace_enabled,
         "total_events": summary.total_events,
         "targeted_read_multiple": TARGETED_READ_MULTIPLE,
         "overall": savings_to_dict(summary.overall),
@@ -94,6 +99,7 @@ def render_summary_text(summary: MetricsSummary) -> str:
     state = "on" if summary.enabled else "off"
     lines = [
         f"Usage metrics: {state}",
+        f"Trace: {'on' if summary.trace_enabled else 'off'}",
         f"Events recorded: {summary.total_events}",
         "",
         *_render_savings_block("Overall", summary.overall),
