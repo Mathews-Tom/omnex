@@ -1,0 +1,19 @@
+name: Docker
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: docker-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  slim:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the slim image
+        run: docker build -f Dockerfile.slim -t omnex:slim .
