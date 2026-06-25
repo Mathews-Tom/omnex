@@ -152,3 +152,52 @@ def test_langchain_retriever_preserves_the_omnex_returned_set() -> None:
     ]
     actual_pairs = [(doc.metadata["unit_id"], doc.page_content) for doc in docs]
     assert actual_pairs == expected_pairs
+
+
+@pytest.mark.skipif(not _HAS_LLAMA_INDEX, reason="requires the [llamaindex] extra")
+def test_llamaindex_retriever_emits_nodes_with_provenance() -> None:
+    from llama_index.core.schema import NodeWithScore, TextNode
+
+    from omnex.integrations.llamaindex import OmnexLlamaRetriever
+
+    units, references = _corpus()
+    kernel = index(units, references)
+    retriever = OmnexLlamaRetriever(kernel=kernel, config=_config(), budget_tokens=400)
+
+    nodes = retriever.retrieve("retrieval indexing")
+
+    assert nodes, "expected at least one node"
+    assert all(isinstance(node, NodeWithScore) for node in nodes)
+    for node in nodes:
+        assert isinstance(node.node, TextNode)
+        assert node.node.text
+        assert node.node.metadata["unit_id"] in {"u_a", "u_b"}
+        assert node.node.metadata["mode"] in {"INCLUDE", "COMPRESS", "ELIDE"}
+        receipt = node.node.metadata["omnex_receipt"]
+        assert isinstance(receipt, dict)
+        assert receipt["determinism_class"] == "byte_exact"
+
+
+@pytest.mark.skipif(not _HAS_LLAMA_INDEX, reason="requires the [llamaindex] extra")
+def test_llamaindex_retriever_preserves_the_omnex_returned_set() -> None:
+    """The retriever emits exactly omnex's packed chunks, in order, unaltered."""
+    from llama_index.core.schema import TextNode
+
+    from omnex.integrations.llamaindex import OmnexLlamaRetriever
+
+    units, references = _corpus()
+    kernel = index(units, references)
+    retriever = OmnexLlamaRetriever(kernel=kernel, config=_config(), budget_tokens=400)
+
+    nodes = retriever.retrieve("retrieval indexing")
+
+    bundle, _ = _expected("retrieval indexing", 400)
+    expected_pairs = [
+        (rep.unit_id, rep.text) for rep in bundle.representations if rep.mode != "SKIP"
+    ]
+    actual_pairs: list[tuple[object, str]] = []
+    for node in nodes:
+        inner = node.node
+        assert isinstance(inner, TextNode)
+        actual_pairs.append((inner.metadata["unit_id"], inner.text))
+    assert actual_pairs == expected_pairs
