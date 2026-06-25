@@ -15,6 +15,7 @@ from omnex.doctor.checks import (
     check_adapters,
     check_extras,
     check_metrics,
+    check_persistence,
     check_registration,
 )
 from omnex.doctor.model import Check, CheckStatus
@@ -25,5 +26,6 @@ __all__ = [
     "check_adapters",
     "check_extras",
     "check_metrics",
+    "check_persistence",
     "check_registration",
 ]
