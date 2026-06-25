@@ -83,12 +83,19 @@ def read_settings() -> dict[str, object]:
 
 
 def write_settings(settings: dict[str, object]) -> None:
-    """Persist the settings mapping, creating the omnex home directory if needed."""
+    """Persist the settings mapping atomically, creating the home dir if needed.
+
+    Write to a sibling temp file then ``os.replace`` it onto the settings path:
+    the rename is atomic on the same filesystem, so an interrupted write or two
+    concurrent writers can never leave a torn settings file that later crashes
+    reads.
+    """
     home = omnex_home()
     home.mkdir(parents=True, exist_ok=True)
-    settings_path().write_text(
-        json.dumps(settings, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    target = settings_path()
+    tmp = target.with_name(f"{target.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(settings, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(tmp, target)
 
 
 def _env_override(name: str) -> bool | None:

@@ -18,8 +18,8 @@ from contextlib import contextmanager
 from dataclasses import astuple, dataclass
 from pathlib import Path
 
-# Bumped when the on-disk schema changes so a future reader can detect and reject
-# a ledger it does not understand rather than silently misreading it.
+# Stamped into the ledger's PRAGMA user_version so a future reader can tell which
+# on-disk schema it is looking at. Bump it whenever the schema changes.
 _SCHEMA_VERSION = 2
 
 _CREATE_EVENTS = """
