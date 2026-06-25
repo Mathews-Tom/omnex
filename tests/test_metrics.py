@@ -9,21 +9,21 @@ clears the enable override, so nothing touches the real ``~/.omnex``.
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 
 import pytest
 
-from omnex.metrics import settings, store
+import omnex
+from omnex._surface import default_config
+from omnex.metrics import recorder, settings, store
 from omnex.metrics.store import UsageEvent
 
-
-@pytest.fixture(autouse=True)
-def _isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Redirect the omnex home to a temp dir and clear the enable override."""
-    home = tmp_path / ".omnex"
-    monkeypatch.setenv("OMNEX_HOME", str(home))
-    monkeypatch.delenv("OMNEX_USAGE_METRICS", raising=False)
-    return home
+_FIXTURES = Path(__file__).resolve().parent / "fixtures"
+_PAYMENTS = _FIXTURES / "payments_openapi.json"
+# A distinctive marker so the redaction test can prove the question never reaches
+# the ledger; "create a payment" is the same query the surface tests use.
+_SECRET_QUESTION = "ZZTOPSECRETMARKER create a payment"
 
 
 def _event(
@@ -50,15 +50,15 @@ def _event(
     )
 
 
-def test_metrics_off_by_default(_isolated_home: Path) -> None:
+def test_metrics_off_by_default(omnex_home: Path) -> None:
     assert settings.metrics_enabled() is False
 
 
-def test_reading_state_creates_no_file(_isolated_home: Path) -> None:
+def test_reading_state_creates_no_file(omnex_home: Path) -> None:
     # Default-off must not materialize the home directory, settings, or ledger.
     settings.metrics_enabled()
     store.read_events(settings.ledger_path())
-    assert not _isolated_home.exists()
+    assert not omnex_home.exists()
     assert not settings.settings_path().exists()
     assert not settings.ledger_path().exists()
 
@@ -96,9 +96,9 @@ def test_env_override_on_beats_persisted_off(monkeypatch: pytest.MonkeyPatch) ->
     assert settings.metrics_enabled() is True
 
 
-def test_omnex_home_honors_override(_isolated_home: Path) -> None:
-    assert settings.omnex_home() == _isolated_home
-    assert settings.ledger_path() == _isolated_home / "usage.sqlite"
+def test_omnex_home_honors_override(omnex_home: Path) -> None:
+    assert settings.omnex_home() == omnex_home
+    assert settings.ledger_path() == omnex_home / "usage.sqlite"
 
 
 def test_ledger_round_trips_event() -> None:
@@ -132,3 +132,99 @@ def test_delete_ledger_removes_file_and_reports() -> None:
     assert store.delete_ledger(path) is True
     assert not path.exists()
     assert store.delete_ledger(path) is False
+
+
+def _query() -> tuple[omnex.ContextBundle, omnex.Receipt]:
+    """Run a real T0 query over the spec fixture, returning bundle and receipt."""
+    return omnex.query_sources([_PAYMENTS], _SECRET_QUESTION, 2000, default_config())
+
+
+def test_disabled_recording_writes_no_event() -> None:
+    bundle, receipt = _query()
+    recorder.record_query(surface="cli", receipt=receipt, bundle=bundle, file_count=1)
+    assert store.read_events(settings.ledger_path()) == []
+    assert not settings.ledger_path().exists()
+
+
+def test_enabled_query_records_one_event() -> None:
+    settings.set_metrics_enabled(True)
+    bundle, receipt = _query()
+    recorder.record_query(surface="cli", receipt=receipt, bundle=bundle, file_count=1)
+    events = store.read_events(settings.ledger_path())
+    assert len(events) == 1
+    event = events[0]
+    assert event.tool == "query"
+    assert event.surface == "cli"
+    assert event.file_count == 1
+    assert event.repo_id != ""
+
+
+def test_event_token_counts_come_from_receipt_verbatim() -> None:
+    settings.set_metrics_enabled(True)
+    bundle, receipt = _query()
+    recorder.record_query(surface="cli", receipt=receipt, bundle=bundle, file_count=1)
+    event = store.read_events(settings.ledger_path())[0]
+    assert event.returned_tokens == receipt.returned_tokens
+    assert event.baseline_tokens == receipt.baseline_tokens
+
+
+def test_query_category_is_the_spec_render_style() -> None:
+    settings.set_metrics_enabled(True)
+    bundle, receipt = _query()
+    recorder.record_query(surface="cli", receipt=receipt, bundle=bundle, file_count=1)
+    assert store.read_events(settings.ledger_path())[0].category == "spec"
+
+
+def test_event_row_redacts_question_and_paths() -> None:
+    settings.set_metrics_enabled(True)
+    bundle, receipt = _query()
+    recorder.record_query(surface="cli", receipt=receipt, bundle=bundle, file_count=1)
+    event = store.read_events(settings.ledger_path())[0]
+    fields = "\x00".join(str(value) for value in dataclasses.astuple(event))
+    assert "ZZTOPSECRETMARKER" not in fields
+    assert str(_PAYMENTS) not in fields
+    # The strongest guarantee: the raw ledger bytes carry no question, path, or
+    # even the source filename -- only anonymous counters.
+    raw = settings.ledger_path().read_bytes()
+    assert b"ZZTOPSECRETMARKER" not in raw
+    assert str(_PAYMENTS).encode() not in raw
+    assert b"payments_openapi" not in raw
+
+
+def test_index_records_zero_token_event() -> None:
+    settings.set_metrics_enabled(True)
+    recorder.record_index(surface="mcp", file_count=3)
+    event = store.read_events(settings.ledger_path())[0]
+    assert event.tool == "index"
+    assert event.category == "index"
+    assert event.surface == "mcp"
+    assert event.file_count == 3
+    assert event.returned_tokens == 0
+    assert event.baseline_tokens == 0
+
+
+def test_surface_split_is_recorded() -> None:
+    settings.set_metrics_enabled(True)
+    bundle, receipt = _query()
+    recorder.record_query(surface="cli", receipt=receipt, bundle=bundle, file_count=1)
+    recorder.record_query(surface="mcp", receipt=receipt, bundle=bundle, file_count=1)
+    assert [event.surface for event in store.read_events(settings.ledger_path())] == ["cli", "mcp"]
+
+
+def test_repo_id_is_stable_and_path_free(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    first = settings.repo_id(repo)
+    second = settings.repo_id(repo)
+    assert first == second
+    content = settings.settings_path().read_text(encoding="utf-8")
+    assert str(repo) not in content
+    assert str(repo.resolve()) not in content
+
+
+def test_distinct_repos_get_distinct_ids(tmp_path: Path) -> None:
+    left = tmp_path / "left"
+    left.mkdir()
+    right = tmp_path / "right"
+    right.mkdir()
+    assert settings.repo_id(left) != settings.repo_id(right)
