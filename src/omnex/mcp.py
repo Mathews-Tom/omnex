@@ -25,6 +25,7 @@ from omnex._surface import (
     index_corpus,
     result_payload,
 )
+from omnex.metrics import recorder
 
 server = FastMCP(
     "omnex",
@@ -47,7 +48,9 @@ def index(paths: list[str]) -> dict[str, int]:
     """
     if not paths:
         raise ValueError("index requires at least one path")
-    documents, units, references = index_corpus(collect_files([Path(p) for p in paths]))
+    files = collect_files([Path(p) for p in paths])
+    documents, units, references = index_corpus(files)
+    recorder.record_index(surface="mcp", file_count=len(files))
     return {"documents": documents, "units": units, "references": references}
 
 
@@ -63,6 +66,7 @@ def query(corpus: str, question: str, budget: int = _DEFAULT_BUDGET) -> dict[str
     """
     sources = collect_files([Path(corpus)])
     bundle, receipt = api.query_sources(sources, question, budget, default_config())
+    recorder.record_query(surface="mcp", receipt=receipt, bundle=bundle, file_count=len(sources))
     return result_payload(bundle, receipt)
 
 
