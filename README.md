@@ -115,7 +115,7 @@ uv tool install "omnex[embed] @ git+https://github.com/Mathews-Tom/omnex"
 uv tool install "omnex[mcp] @ git+https://github.com/Mathews-Tom/omnex"
 ```
 
-Extras: `embed` (T2 local embeddings via `fastembed`), `mcp` (MCP stdio server), `langchain` (LangChain retriever), `bench` (chunk-and-embed benchmark baseline; pulls `embed`). The core install pulls only `networkx`, `tiktoken`, and `click` — importing `omnex` loads no model, opens no socket, and reads no file.
+Extras: `embed` (T2 local embeddings via `fastembed`), `mcp` (MCP stdio server), `langchain` / `llamaindex` (RAG framework retrievers), `bench` (chunk-and-embed benchmark baseline; pulls `embed`). The core install pulls only `networkx`, `tiktoken`, and `click` — importing `omnex` loads no model, opens no socket, and reads no file.
 
 ## Quickstart (CLI)
 
@@ -214,6 +214,8 @@ retriever = OmnexRetriever(kernel=kernel, config=cfg, budget_tokens=2000)
 docs = retriever.invoke("configure TLS for the ingress")
 print(docs[0].page_content, docs[0].metadata["omnex_receipt"]["determinism_class"])
 ```
+
+The LlamaIndex retriever mirrors it — `from omnex.integrations.llamaindex import OmnexLlamaRetriever` (the `[llamaindex]` extra), `retriever.retrieve(query)` returns `NodeWithScore` nodes carrying the same chunks and `omnex_receipt` provenance.
 
 ## Measured results
 
