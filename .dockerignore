@@ -1,0 +1,17 @@
+# Keep the build context minimal: ship only what the wheel needs.
+.git
+.github
+.docs
+docs
+benchmarks
+tests
+*.md
+!README.md
+.venv
+.mypy_cache
+.ruff_cache
+.pytest_cache
+**/__pycache__
+*.pyc
+Dockerfile.*
+.dockerignore
