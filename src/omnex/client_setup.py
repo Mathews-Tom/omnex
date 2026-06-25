@@ -55,6 +55,28 @@ _CLIENT_SCHEMA: dict[ClientName, str] = {
     "omp": _OMP_SCHEMA,
 }
 
+# Delimited agent-guidance block appended to an agent file so a harness reaches
+# for the omnex MCP tools first. The delimiters make the append idempotent: the
+# block is recognized and never duplicated on re-run.
+AGENT_GUIDANCE_START = "<!-- omnex:mcp-guidance start -->"
+AGENT_GUIDANCE_END = "<!-- omnex:mcp-guidance end -->"
+AGENT_GUIDANCE_PROMPT = "\n".join(
+    [
+        "## Repository context via omnex (MCP)",
+        (
+            "For retrieval over docs, specs, and configs, prefer the omnex MCP tools "
+            "over reading files by hand:"
+        ),
+        "- `index` — validate and summarize a corpus (the shape it would index)",
+        "- `query` — retrieve a token-budgeted ContextBundle with an auditable Receipt",
+        (
+            "Pass the corpus path to `query`. In harnesses with on-demand tool discovery, "
+            "activate the omnex tools first. Treat omnex output as context selection, not "
+            "proof — verify with reads/tests before editing."
+        ),
+    ]
+)
+
 
 @dataclass(frozen=True)
 class ClientInstallPlan:
@@ -124,6 +146,44 @@ def render_client_install_preview(plan: ClientInstallPlan) -> str:
         plan.content.rstrip(),
     ]
     return "\n".join(lines) + "\n"
+
+
+def render_agent_guidance_block() -> str:
+    """The delimited omnex MCP guidance block, including its start/end markers."""
+    return f"{AGENT_GUIDANCE_START}\n{AGENT_GUIDANCE_PROMPT}\n{AGENT_GUIDANCE_END}\n"
+
+
+def append_agent_guidance(agent_file: Path) -> bool:
+    """Append the omnex MCP guidance block to AGENT_FILE exactly once.
+
+    Returns ``True`` if the block was written, ``False`` if it was already
+    present. The append is non-destructive: existing content is preserved and
+    the delimited block is never duplicated on re-run.
+    """
+    block = render_agent_guidance_block()
+    if agent_file.exists():
+        existing = agent_file.read_text(encoding="utf-8")
+        if AGENT_GUIDANCE_START in existing:
+            return False
+        new_content = existing.rstrip("\n") + "\n\n" + block if existing.strip() else block
+    else:
+        agent_file.parent.mkdir(parents=True, exist_ok=True)
+        new_content = block
+    agent_file.write_text(new_content, encoding="utf-8")
+    return True
+
+
+def render_agent_guidance_preview(agent_file: Path) -> str:
+    """Preview the agent-file append without writing: state whether it is present."""
+    already_present = agent_file.exists() and (
+        AGENT_GUIDANCE_START in agent_file.read_text(encoding="utf-8")
+    )
+    status = (
+        "omnex MCP guidance already present; no change."
+        if already_present
+        else "Append omnex MCP guidance block (idempotent):"
+    )
+    return f"Agent file: {agent_file}\n{status}\n\n{render_agent_guidance_block()}"
 
 
 def write_client_install_plan(plan: ClientInstallPlan) -> Path:

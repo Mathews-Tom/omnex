@@ -33,7 +33,9 @@ from omnex.client_setup import (
     ALL_CLIENTS,
     ClientName,
     ClientScope,
+    append_agent_guidance,
     build_client_install_plan,
+    render_agent_guidance_preview,
     render_client_install_preview,
     resolve_scope,
     write_client_install_plan,
@@ -160,8 +162,18 @@ def query_command(corpus: Path, question: str, budget: int, output_format: str) 
     default=False,
     help="Preview the resolved target and config without writing anything.",
 )
+@click.option(
+    "--agent-file",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Append the omnex MCP guidance prompt to this agent file (CLAUDE.md, AGENTS.md).",
+)
 def install_client_command(
-    client: str, source: str | None, scope: str | None, dry_run: bool
+    client: str,
+    source: str | None,
+    scope: str | None,
+    dry_run: bool,
+    agent_file: Path | None,
 ) -> None:
     """Write the MCP client configuration that registers the omnex-mcp server.
 
@@ -170,8 +182,10 @@ def install_client_command(
     is merged into the client's existing config without clobbering unrelated
     sections, so adopters do not hand-write MCP JSON for the existing server.
     With --dry-run the resolved target and config are printed and nothing is
-    written to disk.
+    written to disk. --agent-file appends ready-to-paste omnex MCP guidance to
+    an agent file once (a re-run is a no-op).
     """
+    agent_path = agent_file.expanduser() if agent_file is not None else None
     try:
         resolved_scope = resolve_scope(
             cast("ClientName", client),
@@ -181,8 +195,15 @@ def install_client_command(
         plan = build_client_install_plan(cast("ClientName", client), source, scope=resolved_scope)
         if dry_run:
             click.echo(render_client_install_preview(plan), nl=False)
+            if agent_path is not None:
+                click.echo(render_agent_guidance_preview(agent_path), nl=False)
             return
         target = write_client_install_plan(plan)
+        click.echo(f"Wrote {client} config: {target}")
+        if agent_path is not None:
+            if append_agent_guidance(agent_path):
+                click.echo(f"Appended omnex MCP guidance: {agent_path}")
+            else:
+                click.echo(f"omnex MCP guidance already present: {agent_path}")
     except (ValueError, OSError) as exc:
         raise click.ClickException(str(exc)) from exc
-    click.echo(f"Wrote {client} config: {target}")
