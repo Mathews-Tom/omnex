@@ -403,7 +403,6 @@ CI runs the same four gates on every push and PR. Standards: Python 3.12, `from 
 
 - [System overview](docs/system-overview.md) — what, why (context rot, token economics), market framing.
 - [System design](docs/system-design.md) — IR contract, adapter Protocol, kernel internals, tier semantics.
-- [Pitch](docs/pitch.md) — the thesis, the moat, the honest risks.
 
 ## License
 
