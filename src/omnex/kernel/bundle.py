@@ -92,3 +92,23 @@ class ContextBundle:
             style = _KIND_STYLE.get(unit.kind, "prose")
             blocks.append(_RENDERERS[style](unit, rep.text))
         return "\n\n".join(blocks)
+
+    def dominant_style(self) -> str:
+        """The most common render style among included representations.
+
+        A coarse, content-free label -- ``"prose"``, ``"code"``, or ``"spec"`` --
+        for the kind of material a retrieval returned, or ``"empty"`` when nothing
+        was included. The usage-metrics layer uses it to categorize a query
+        anonymously; ties break by the fixed style order so the label is
+        deterministic for a fixed bundle.
+        """
+        counts: dict[RenderStyle, int] = {}
+        for rep in self.representations:
+            if rep.mode == "SKIP":
+                continue
+            style = _KIND_STYLE.get(self.units[rep.unit_id].kind, "prose")
+            counts[style] = counts.get(style, 0) + 1
+        if not counts:
+            return "empty"
+        order: tuple[RenderStyle, ...] = ("prose", "code", "spec")
+        return max(order, key=lambda style: counts.get(style, 0))
